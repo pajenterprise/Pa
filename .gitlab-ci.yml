@@ -1,0 +1,10 @@
+---
+stages:
+  - test
+
+test:
+  stage: test
+  tags: ["runner:windows-docker", "windowsversion:1809_test"]
+  script:
+    - $ErrorActionPreference = "Stop"
+    - Start-Sleep 1000
