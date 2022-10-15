@@ -1,0 +1,48 @@
+---
+# FIXME: our current Gitlab version doesn't support importing a file more than once
+# For now, the workaround is to include "common" files once in the top-level .gitlab-ci.yml file
+# See: https://gitlab.com/gitlab-org/gitlab/-/issues/28987
+# include:
+#   - /.gitlab/docker_common/tag_job_templates.yml
+
+.if_deploy_on_tag_7: &if_deploy_on_tag_7
+  # no RELEASE_VERSION means a nightly build for omnibus
+  if: $DEPLOY_AGENT == "true" && $RELEASE_VERSION_7 != "nightly-a7" && $RELEASE_VERSION_7 != ""
+
+.if_deploy_7: &if_deploy_7
+  if: $DEPLOY_AGENT == "true" && $RELEASE_VERSION_7 != ""
+
+.if_not_master_branch: &if_not_master_branch
+  if: $CI_COMMIT_BRANCH != "master"
+
+deploy_docker-7-prod:
+  stage: deploy7
+  rules:
+    - <<: *if_deploy_on_tag_7
+  trigger:
+    include:
+      - local: /.gitlab/deploy_7/child_pipelines/docker.yml
+  variables:
+    # Override SRC_TAG in order to not use the child pipeline's pipeline id
+    SRC_TAG: v${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}
+    AGENT_DH_REPOSITORY: datadog/agent
+    AGENT_GCR_REPOSITORY: gcr.io/datadoghq/agent
+    DOGSTATSD_DH_REPOSITORY: datadog/dogstatsd
+    DOGSTATSD_GCR_REPOSITORY: gcr.io/datadoghq/dogstatsd
+
+deploy_docker-7-dev:
+  stage: deploy7
+  rules:
+    - <<: *if_deploy_on_tag_7
+      when: never
+    - <<: *if_deploy_7
+  trigger:
+    include:
+      - local: /.gitlab/deploy_7/child_pipelines/docker.yml
+  variables:
+    # Override SRC_TAG in order to not use the child pipeline's pipeline id
+    SRC_TAG: v${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}
+    AGENT_DH_REPOSITORY: datadog/agent-dev
+    AGENT_GCR_REPOSITORY: gcr.io/datadoghq/agent-dev
+    DOGSTATSD_DH_REPOSITORY: datadog/dogstatsd-dev
+    DOGSTATSD_GCR_REPOSITORY: gcr.io/datadoghq/dogstatsd-dev
