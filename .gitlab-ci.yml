@@ -1,0 +1,224 @@
+stages:
+  - image_build
+  - deploy
+  - delete
+
+variables:
+  # The SRC_PATH is in the GOPATH of the builders which
+  # currently is /go
+  SRC_PATH: /go/src/github.com/DataDog/datadog-agent
+  # Directory in which we execute the omnibus build.
+  # For an unknown reason, it does not go well with
+  # a ruby dependency if we build directly into $CI_PROJECT_DIR/.omnibus
+  OMNIBUS_BASE_DIR: /.omnibus
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR: $CI_PROJECT_DIR/.omnibus/pkg/
+  # Directory in which we execute the omnibus build for SUSE
+  # as we want to separate the RPM built for this distro.
+  OMNIBUS_BASE_DIR_SUSE: /.omnibus/suse
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR_SUSE: $CI_PROJECT_DIR/.omnibus/suse/pkg
+  OMNIBUS_BASE_DIR_WIN: c:\omni-base\$CI_RUNNER_ID
+  OMNIBUS_BASE_DIR_WIN_OMNIBUS: c:/omni-base/$CI_RUNNER_ID
+  DD_AGENT_TESTING_DIR: $CI_PROJECT_DIR/test/kitchen
+  STATIC_BINARIES_DIR: bin/static
+  DOGSTATSD_BINARIES_DIR: bin/dogstatsd
+  AGENT_BINARIES_DIR: bin/agent
+  CLUSTER_AGENT_BINARIES_DIR: bin/datadog-cluster-agent
+  SYSTEM_PROBE_BINARIES_DIR: bin/system-probe
+  DEB_S3_BUCKET: apt.datad0g.com
+  RPM_S3_BUCKET: yum.datad0g.com
+  WIN_S3_BUCKET: dd-agent-mstesting
+  PROCESS_S3_BUCKET: datad0g-process-agent
+  ANDROID_S3_BUCKET: dd-agent-androidtesting
+  DEB_RPM_BUCKET_BRANCH: nightly  # branch of the DEB_S3_BUCKET and RPM_S3_BUCKET repos to release to, 'nightly' or 'beta'
+  DEB_TESTING_S3_BUCKET: apttesting.datad0g.com
+  RPM_TESTING_S3_BUCKET: yumtesting.datad0g.com
+  WINDOWS_TESTING_S3_BUCKET: $WIN_S3_BUCKET/pipelines/$CI_PIPELINE_ID
+  WINDOWS_BUILDS_S3_BUCKET: $WIN_S3_BUCKET/builds
+  ANDROID_BUILDS_S3_BUCKET: $ANDROID_S3_BUCKET/builds
+  DEB_RPM_TESTING_BUCKET_BRANCH: testing  # branch of the DEB_TESTING_S3_BUCKET and RPM_TESTING_S3_BUCKET repos to release to, 'testing'
+  DD_REPO_BRANCH_NAME: $CI_COMMIT_REF_NAME
+  S3_CP_OPTIONS: --only-show-errors --region us-east-1 --sse AES256
+  S3_CP_CMD: aws s3 cp $S3_CP_OPTIONS
+  S3_ARTEFACTS_URI: s3://dd-ci-artefacts-build-stable/$CI_PROJECT_NAME/$CI_PIPELINE_ID
+  S3_OMNIBUS_CACHE_BUCKET: dd-ci-datadog-agent-omnibus-cache-build-stable
+  S3_DSD6_URI: s3://dsd6-staging/linux
+  RELEASE_VERSION: nightly
+  IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+  DSD_IMAGE: &dogstatsd_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/dogstatsd
+
+
+# Default before_script for all the jobs. If you create a new job and don't want this to execute
+# you NEED to overwrite it.
+before_script:
+  - echo running default before_script
+  - cd $SRC_PATH
+  - pip install --upgrade --ignore-installed pip setuptools
+  - pip install -r requirements.txt
+  - inv -e deps --dep-vendor-only
+
+#
+# Trigger conditions
+#
+
+# run job only when triggered by an external tool (ex: Jenkins). This is used
+# for jobs that run both on nightlies and tags
+.run_when_triggered: &run_when_triggered
+  only:
+    - triggers
+
+# run job only when triggered by an external tool (ex: Jenkins) and when
+# RELEASE_VERSION is NOT "nightly". In this setting we are building either a
+# new tagged version of the agent (an RC for example). In both cases the
+# artifacts should be uploaded to our staging repository.
+
+.run_when_triggered_on_tag: &run_when_triggered_on_tag
+  only:
+    refs:
+      - triggers
+  except: # we have to use except since gitlab doens't handle '!=' operator
+    variables:
+      - $RELEASE_VERSION == "nightly"
+      - $RELEASE_VERSION == "" # no  RELEASE_VERSION means a nightly build for omnibus
+
+.docker_build_job_definition: &docker_build_job_definition
+  stage: image_build
+  tags: [ "runner:docker", "size:large" ]
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/docker-notary:0.6.1
+  before_script: [ "# noop" ] # Override top level entry
+  dependencies: [] # Don't download Gitlab artifacts
+  script:
+    - TAG_SUFFIX=${TAG_SUFFIX:-}
+    - TARGET_TAG=$IMAGE:v$CI_PIPELINE_ID-${CI_COMMIT_SHA:0:7}$TAG_SUFFIX
+    # Pull base image(s) with content trust enabled
+    - pip install -r requirements.txt
+    # Build release stage and push to ECR
+    - docker pull datadog/agent:6.13.0-beta-1$TAG_SUFFIX
+    - docker tag datadog/agent:6.13.0-beta-1$TAG_SUFFIX $TARGET_TAG
+    - docker push $TARGET_TAG
+
+# build agent6 image
+build_agent6:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+    TAG_SUFFIX: -py2
+
+# build agent6 jmx image
+build_agent6_jmx:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+    TAG_SUFFIX: -py2-jmx
+
+# build agent7 jmx image
+build_agent7_py3_jmx:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+    TAG_SUFFIX: -py3-jmx
+
+# build agent7 image
+build_agent7_py3:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+    TAG_SUFFIX: -py3
+
+
+.docker_tag_job_definition: &docker_tag_job_definition
+  stage: image_deploy
+  tags: [ "runner:docker", "size:large" ]
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/docker-notary:0.6.1
+  before_script:
+    - export SRC_TAG=v$CI_PIPELINE_ID-${CI_COMMIT_SHA:0:7}
+    - DOCKER_REGISTRY_LOGIN=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_LOGIN_SSM_KEY --with-decryption --query "Parameter.Value" --out text)
+    - aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_PWD_SSM_KEY --with-decryption --query "Parameter.Value" --out text | docker login --username "$DOCKER_REGISTRY_LOGIN" --password-stdin "$DOCKER_REGISTRY_URL"
+    - pip install -r requirements.txt
+    - if [[ -z "$DELEGATION_PASS_SSM_KEY" ]]; then echo "No signing key set"; exit 0; fi
+    - echo "Importing delegation signing key"
+    - export DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DELEGATION_PASS_SSM_KEY --with-decryption --query "Parameter.Value" --out text)
+    - aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DELEGATION_KEY_SSM_KEY --with-decryption --query "Parameter.Value" --out text > /tmp/docker.key
+    - notary -d ~/.docker/trust key import /tmp/docker.key; rm /tmp/docker.key
+  dependencies: [] # Don't download Gitlab artefacts
+
+.docker_hub_variables: &docker_hub_variables
+  DOCKER_REGISTRY_LOGIN_SSM_KEY: docker_hub_login
+  DOCKER_REGISTRY_PWD_SSM_KEY: docker_hub_pwd
+  DELEGATION_KEY_SSM_KEY: docker_hub_signing_key
+  DELEGATION_PASS_SSM_KEY: docker_hub_signing_pass
+  DOCKER_REGISTRY_URL: docker.io
+  SRC_AGENT: *agent_ecr
+  SRC_DSD: *dogstatsd_ecr
+
+.quay_variables: &quay_variables
+  <<: *docker_hub_variables
+  DOCKER_REGISTRY_LOGIN_SSM_KEY: quay_login
+  DOCKER_REGISTRY_PWD_SSM_KEY: quay_pwd
+  DOCKER_REGISTRY_URL: quay.io
+
+#
+# deploy
+#
+
+# REMOVED EVERYTHING ELSE
+
+#
+# Docker releases
+#
+
+tag_release_6:
+  <<: *docker_tag_job_definition
+  stage: deploy
+  when: manual
+  variables:
+    <<: *docker_hub_variables
+  script:
+    - inv -e docker.publish --signed-push ${SRC_AGENT}:v1562987-f947d72-py2 datadog/agent:6.13.0-beta-1-py2
+    - inv -e docker.publish --signed-push ${SRC_AGENT}:v1562987-f947d72-py2-jmx datadog/agent:6.13.0-beta-1-py2-jmx
+    - inv -e docker.publish --signed-push ${SRC_DSD}:v1562987-f947d72 datadog/dogstatsd:6.13.0-beta-1-py2
+
+tag_release_7:
+  <<: *docker_tag_job_definition
+  stage: deploy
+  when: manual
+  variables:
+    <<: *docker_hub_variables
+  script:
+    - inv -e docker.publish --signed-push ${SRC_AGENT}:v1562987-f947d72-py3 datadog/agent:6.13.0-beta-1-py3
+    - inv -e docker.publish --signed-push ${SRC_AGENT}:v1562987-f947d72-py3-jmx datadog/agent:6.13.0-beta-1-py3-jmx
+
+# Use this step to delete a tag of a given image
+# We call the Docker Hub API because docker cli doesn't support deleting tags
+# - remove the leading dot from the name
+# - set the IMAGE and TAG envvars
+# - in the gitlab pipeline view, trigger the step (in the first column)
+#
+delete_docker_tag:
+  tags: [ "runner:docker", "size:large" ]
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/docker-notary:0.6.1
+  before_script:
+    - DOCKER_REGISTRY_LOGIN=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_LOGIN_SSM_KEY --with-decryption --query "Parameter.Value" --out text)
+    - PASS=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_PWD_SSM_KEY --with-decryption --query "Parameter.Value" --out text)
+    - pip install -r requirements.txt
+    - |
+      export DOCKER_TOKEN=`curl -s -H "Content-Type: application/json" -X POST -d '{"username": "'$DOCKER_REGISTRY_LOGIN'", "password": "'$PASS'"}' https://hub.docker.com/v2/users/login/ | python -c 'import sys, json; print(json.load(sys.stdin)["token"].strip())'`
+  dependencies: [] # Don't download Gitlab artefacts
+  stage: delete
+  when: manual
+  variables:
+    <<: *docker_hub_variables
+    IMAGE: "dogstatsd"  # image name, for example "agent"
+    TAG: "6.13.0-beta-py3-1"  # tag name, for example "6.9.0"
+    ORGANIZATION: "datadog"
+  script:
+    - if [[ -z "$IMAGE" ]]; then echo "Need an image"; exit 1; fi
+    - if [[ -z "$TAG" ]]; then echo "Need a tag to delete"; exit 1; fi
+    - inv -e docker.delete ${ORGANIZATION} ${IMAGE} ${TAG} ${DOCKER_TOKEN} &>/dev/null
