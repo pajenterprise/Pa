@@ -1,0 +1,391 @@
+version: 2
+
+# This file uses YAML anchors to deduplicate steps
+# see https://circleci.com/blog/circleci-hacks-reuse-yaml-in-your-circleci-config-with-yaml/
+# and https://learnxinyminutes.com/docs/yaml/
+
+experimental:
+  # For some reason filtering out notifications keeps being undocumented and
+  # marked as experimental but as of today, it's still working.
+  notify:
+    branches:
+      only:
+        - master
+
+templates:
+  job_template: &job_template
+    docker:
+      - image: datadog/datadog-agent-runner-circle:go1138
+        environment:
+          USE_SYSTEM_LIBS: "1"
+    working_directory: /go/src/github.com/DataDog/datadog-agent
+
+  step_templates:
+    - restore_cache: &restore_deps
+        keys:
+          # The first match will be used. Doing that so new branches
+          # use master's cache but don't pollute it back.
+          #
+          # If incremental dep fails, increase the cache gen number
+          # in restore_deps AND save_deps
+          # See https://github.com/DataDog/datadog-agent/pull/2384
+          - gen15-godeps-{{ .Branch }}-{{ .Revision }}
+          - gen15-godeps-{{ .Branch }}-
+          - gen15-godeps-master-
+    - save_cache: &save_deps
+        key: gen15-godeps-{{ .Branch }}-{{ .Revision }}
+    - restore_cache: &restore_source
+        keys:
+          # Cache retrieval is faster than full git checkout
+          - v4-repo-{{ .Revision }}
+    - save_cache: &save_source
+        key: v4-repo-{{ .Revision }}
+
+jobs:
+  checkout_code:
+    docker:
+      - image: alpine/git:latest
+    working_directory: /go/src/github.com/DataDog/datadog-agent
+    steps:
+      - checkout
+      - save_cache:
+          <<: *save_source
+          paths:
+            - /go/src/github.com/DataDog/datadog-agent
+
+  dependencies:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: setup python deps
+          command: |
+            pip install wheel
+            pip install -r requirements.txt
+            pip3 install flake8==3.8.3 flake8-bugbear==20.1.4
+      - run:
+          name: grab go deps
+          command: |
+            inv deps --verbose --dep-vendor-only
+      - run:
+          name: build rtloader
+          command: |
+            inv rtloader.make --install-prefix=/go/src/github.com/DataDog/datadog-agent/dev
+            inv rtloader.install
+      - run:
+          name: lint rtloader
+          command: |
+            inv rtloader.format --raise-if-changed
+      - run:
+          name: test rtloader
+          command: |
+            # remove base check before running tests, go on if pip fails
+            pip uninstall datadog-checks-base -y || :
+            inv rtloader.test
+      - run:
+          name: pre-compile go deps
+          command: inv -e agent.build --exclude-rtloader --race --precompile-only
+      - save_cache:
+          <<: *save_deps
+          paths:
+            - /go/src/github.com/DataDog/datadog-agent/vendor
+            - /go/src/github.com/DataDog/datadog-agent/dev
+            - /go/pkg
+            - /go/bin
+            - /usr/local/lib/python2.7/dist-packages
+            - /usr/local/lib/python3.6/dist-packages
+            - /usr/local/bin
+
+  unit_tests:
+    <<: *job_template
+    resource_class: large
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: run unit tests
+          command: inv -e test --python-runtimes 3 --coverage --race --profile --fail-on-fmt --cpus 3
+      - run:
+          name: upload code coverage results
+          # Never fail on coverage upload
+          command: bash <(curl -s https://codecov.io/bash) -f profile.cov -F linux || true
+
+  integration_tests:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - setup_remote_docker
+      - run:
+          name: run integration tests
+          command: inv -e integration-tests --race --remote-docker
+
+  release_note:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-releasenote
+          name: run PR check for release note
+
+  team_label:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-teamassignment
+          name: run PR check for team assignment labels
+
+  milestone:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-milestone
+          name: run PR check for milestone assignment
+
+  filename_linting:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: run filename linting
+          command: inv -e lint-filenames
+
+  shell_linting:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: Install shellcheck
+          command: inv -e install-shellcheck
+      - run:
+          name: Print shellcheck version
+          command: shellcheck --version
+      - run:
+          name: Run shellcheck
+          #Excludes:
+          #SC2028: echo may not expand escape sequences. Use printf.
+          #SC2059: Don't use variables in the printf format string. Use printf "..%s.." "$foo".
+          command: shellcheck --severity=info -e SC2059 -e SC2028 --shell=bash ./cmd/**/*.sh ./omnibus/package-scripts/*/*
+
+  python_linting:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: lint python files
+          command: inv -e lint-python
+
+  docker_tests:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - setup_remote_docker
+      - run:
+          name: run docker image tests
+          command: inv -e docker.test
+      - run:
+          name: run docker image integration tests
+          command: inv -e docker.integration-tests
+
+  build_binaries:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: build dogstatsd
+          command: inv -e dogstatsd.build --static
+      - run:
+          name: build agent
+          command: inv -e agent.build --exclude-rtloader
+
+  build_iot_agent:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: build iot agent
+          command: inv -e agent.build --iot
+      - run:
+          name: test iot agent
+          command: ./bin/agent/agent -c ./bin/agent/dist check cpu
+
+  documentation_generation:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: generate doxygen documentation
+          command: inv -e rtloader.generate-doc
+
+  macos_tests:
+    macos:
+      xcode: 10.1.0
+    environment:
+      GO_VERSION: "1.13.8"
+    working_directory: ~/go/src/github.com/DataDog/datadog-agent
+    steps:
+      - checkout
+      - run: brew update
+      - run:
+          name: Setup runner
+          command: |
+            brew uninstall python@2 # Remove python2, we don't need it
+            brew upgrade python # Upgrade python3 to latest avilable on brew
+            ln -s /usr/local/bin/pip3 /usr/local/bin/pip # Use pip3 by default
+
+            mkdir -p $HOME/go
+
+            brew install cmake -f
+            brew install gimme
+            brew install clang-format
+
+            pip install -r requirements.txt
+      - run:
+          name: Compile rtloader
+          command: |
+            eval `gimme $GO_VERSION`
+            export GOPATH="$HOME/go"
+            export PATH="$GOPATH/bin:$PATH"
+
+            inv rtloader.make --install-prefix=$GOPATH/src/github.com/DataDog/datadog-agent/dev
+            inv rtloader.install
+      - run:
+          name: Lint rtloader
+          command: |
+            eval `gimme $GO_VERSION`
+            export GOPATH="$HOME/go"
+            export PATH="$GOPATH/bin:$PATH"
+
+            inv rtloader.format --raise-if-changed
+      - run:
+          name: Test rtloader
+          command: |
+            eval `gimme $GO_VERSION`
+            export GOPATH="$HOME/go"
+            export PATH="$GOPATH/bin:$PATH"
+
+            inv rtloader.test
+      - run:
+          name: Run tests
+          command: |
+            eval `gimme $GO_VERSION`
+            export GOPATH="$HOME/go"
+            export PATH="$GOPATH/bin:$PATH"
+
+            inv -e deps --dep-vendor-only
+            inv -e test --python-runtimes 3 --coverage --race --profile --fail-on-fmt --cpus 3
+
+  macos_build:
+    macos:
+      xcode: 10.1.0
+    environment:
+      GO_VERSION: "1.13.8"
+      RUBY_VERSION: "2.4"
+      RELEASE_VERSION: "nightly-a7"
+      AGENT_MAJOR_VERSION: "7"
+      PYTHON_RUNTIMES: "3"
+    working_directory: ~/go/src/github.com/DataDog/datadog-agent
+    steps:
+      - checkout
+      - run: brew update
+      - run:
+          name: Setup builder
+          command: |
+            brew install ruby@$RUBY_VERSION -f
+            export PATH="/usr/local/opt/ruby@$RUBY_VERSION/bin:/usr/local/lib/ruby/gems/$RUBY_VERSION.0/bin:$PATH"
+            echo 'export PATH="/usr/local/opt/ruby@'$RUBY_VERSION'/bin:/usr/local/lib/ruby/gems/'$RUBY_VERSION'.0/bin:$PATH"' >> .build_setup
+            gem install bundle -f
+
+            brew uninstall python@2 # Remove python2, we don't need it
+            brew upgrade python # Upgrade python3 to latest avilable on brew
+            ln -s /usr/local/bin/pip3 /usr/local/bin/pip # Use pip3 by default
+
+            brew install pkg-config -f
+            brew install cmake -f
+
+            mkdir -p $HOME/go
+            export GOPATH=$HOME/go
+            echo 'export GOPATH=$HOME/go' >> .build_setup
+            export PATH="$GOPATH/bin:$PATH"
+            echo 'export PATH="$GOPATH/bin:$PATH"' >> .build_setup
+
+            brew install gimme
+            echo 'eval `gimme '$GO_VERSION'`' >> .build_setup
+      - run:
+          name: Run omnibus build
+          command: |
+            source .build_setup
+            pip install -r requirements.txt
+            sudo rm -rf /opt/datadog-agent ./vendor ./vendor-new /var/cache/omnibus/src/* ./omnibus/Gemfile.lock
+            sudo mkdir -p /opt/datadog-agent /var/cache/omnibus && sudo chown $USER /opt/datadog-agent /var/cache/omnibus
+            inv -e agent.omnibus-build --skip-sign --python-runtimes $PYTHON_RUNTIMES --major-version $AGENT_MAJOR_VERSION --release-version $RELEASE_VERSION
+
+      - run: mkdir -p ~/artifacts && cp omnibus/pkg/*.dmg ~/artifacts
+      - store_artifacts:
+          path: ~/artifacts
+
+workflows:
+  version: 2
+  test_and_build:
+    jobs:
+      - checkout_code
+      - macos_tests
+      - macos_build:
+          requires:
+            - macos_tests
+      - dependencies:
+          requires:
+            - checkout_code
+      - unit_tests:
+          requires:
+            - dependencies
+      - integration_tests:
+          requires:
+            - dependencies
+      - release_note:
+          requires:
+            - dependencies
+      - team_label:
+          requires:
+            - dependencies
+      - milestone:
+          requires:
+            - dependencies
+      - filename_linting:
+          requires:
+            - dependencies
+      - shell_linting:
+          requires:
+            - dependencies
+      - python_linting:
+          requires:
+            - dependencies
+      - docker_tests:
+          requires:
+            - dependencies
+      - documentation_generation:
+          requires:
+            - dependencies
+      - build_binaries:
+          requires:
+            - unit_tests
+            - integration_tests
+            - docker_tests
+      - build_iot_agent:
+          requires:
+            - unit_tests
+            - integration_tests
+            - docker_tests
