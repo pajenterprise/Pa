@@ -1,0 +1,7 @@
+vendor/
+bin/
+
+.DS_Store
+*.cov
+*.pyc
+*.swp
