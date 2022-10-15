@@ -1,0 +1,15 @@
+---
+.if_deploy_on_tag_7: &if_deploy_on_tag_7
+  # no RELEASE_VERSION means a nightly build for omnibus
+  if: $DEPLOY_AGENT == "true" && $RELEASE_VERSION_7 != "nightly-a7" && $RELEASE_VERSION_7 != ""
+
+deploy_docker-7:
+  stage: deploy7
+  rules:
+    - <<: *if_deploy_on_tag_7
+  trigger:
+    include:
+      - local: /.gitlab/deploy_7/child_pipelines/docker.yml
+  variables:
+    # Override SRC_TAG in order to not use the child pipeline's pipeline id
+    SRC_TAG: v${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}
