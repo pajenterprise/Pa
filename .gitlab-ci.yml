@@ -1,0 +1,68 @@
+
+not_found:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - "a=$(asdasdasd)"
+    - "true"
+
+error_exit:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - "a=$(false)"
+    - "true"
+    
+export_not_found:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - "export a=$(asdasdasd)"
+    - "true"
+
+export_error_exit:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - "export a=$(false)"
+    - "true"
+
+sete_not_found:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - set -e
+    - "a=$(asdasdasd)"
+    - "true"
+
+sete_error_exit:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - set -e
+    - "a=$(false)"
+    - "true"
+
+sete_export_not_found:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - set -e
+    - "export a=$(asdasdasd)"
+    - "true"
+
+sete_export_error_exit:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:v2752318-c3e56c1
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - set -e
+    - "export a=$(false)"
+    - "true"
