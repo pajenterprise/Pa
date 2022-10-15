@@ -1,0 +1,589 @@
+require 'json'
+require 'open-uri'
+require 'rspec'
+require 'rbconfig'
+require 'yaml'
+
+os_cache = nil
+
+def os
+  # OS Detection from https://stackoverflow.com/questions/11784109/detecting-operating-systems-in-ruby
+  os_cache ||= (
+    host_os = RbConfig::CONFIG['host_os']
+    case host_os
+    when /mswin|msys|mingw|cygwin|bccwin|wince|emc/
+      :windows
+    when /darwin|mac os/
+      :macosx
+    when /linux/
+      :linux
+    when /solaris|bsd/
+      :unix
+    else
+      raise Error::WebDriverError, "unknown os: #{host_os.inspect}"
+    end
+  )
+end
+
+
+def agent_command
+  if os == :windows
+    '"C:\\Program Files\\Datadog\\Datadog Agent\\embedded\\agent.exe"'
+  else
+    "sudo datadog-agent"
+  end
+end
+
+def stop
+  if os == :windows
+    # forces the trace agent (and other dependent services) to stop
+    system 'net stop /y datadogagent 2>&1'
+    sleep 15
+  else
+    if has_systemctl
+      system 'sudo systemctl stop datadog-agent.service && sleep 10'
+    else
+      system 'sudo initctl stop datadog-agent && sleep 10'
+    end
+  end
+end
+
+def start
+  if os == :windows
+    system 'net start datadogagent 2>&1'
+    sleep 15
+  else
+    if has_systemctl
+      system 'sudo systemctl start datadog-agent.service && sleep 10'
+    else
+      system 'sudo initctl start datadog-agent && sleep 10'
+    end
+  end
+end
+
+def restart
+  if os == :windows
+    # forces the trace agent (and other dependent services) to stop
+    if is_running?
+      system 'net stop /y datadogagent 2>&1'
+      sleep 15
+    end
+    system 'net start datadogagent 2>&1'
+    sleep 15
+  else
+    if has_systemctl
+      system 'sudo systemctl restart datadog-agent.service && sleep 10'
+    else
+      # initctl can't restart
+      system '(sudo initctl restart datadog-agent || sudo initctl start datadog-agent) && sleep 10'
+    end
+  end
+end
+
+def has_systemctl
+  system('command -v systemctl 2>&1 > /dev/null')
+end
+
+def info
+  `#{agent_command} status 2>&1`
+end
+
+def json_info
+  info_output = `#{agent_command} status -j 2>&1`
+  info_output = info_output.gsub("Getting the status from the agent.", "")
+
+  # removes any stray log lines
+  info_output = info_output.gsub(/[0-9]+[ ]\[[a-zA-Z]+\][a-zA-Z \t%:\\]+$/, "")
+
+  JSON.parse(info_output)
+end
+
+def status
+  if os == :windows
+    status_out = `sc interrogate datadogagent 2>&1`
+    puts status_out
+    status_out.include?('RUNNING')
+  else
+    if has_systemctl
+      system('sudo systemctl status --no-pager datadog-agent.service')
+    else
+      system('sudo initctl status datadog-agent')
+    end
+  end
+end
+
+def is_service_running?(svcname)
+  if os == :windows
+    `sc interrogate #{svcname} 2>&1`.include?('RUNNING')
+  else
+    if has_systemctl
+        system("sudo systemctl status --no-pager #{svcname}.service")
+    else
+        status = `sudo initctl status #{svcname}`
+        status.include?('start/running')
+    end
+  end
+end
+
+def is_running?
+  if os == :windows
+    return is_service_running?("datadogagent")
+  else
+    return is_service_running?("datadog-agent")
+  end
+end
+
+def is_process_running?(pname)
+  if os == :windows
+    tasklist = `tasklist /fi \"ImageName eq #{pname}\" 2>&1`
+    if tasklist.include?(pname)
+      return true
+    end
+  else
+    return true if system("pgrep -f #{pname}")
+  end
+  return false
+end
+
+def agent_processes_running?
+  %w(datadog-agent agent.exe).each do |p|
+    return true if is_process_running?(p)
+  end
+  false
+end
+
+def read_agent_file(path, commit_hash)
+  open("https://raw.githubusercontent.com/DataDog/datadog-agent/#{commit_hash}/#{path}").read()
+end
+
+# Hash of the commit the Agent was built from
+def agent_git_hash
+  JSON.parse(IO.read("/opt/datadog-agent/version-manifest.json"))['software']['datadog-agent']['locked_version']
+end
+
+def trace_agent_git_hash
+  JSON.parse(IO.read("/opt/datadog-agent/version-manifest.json"))['software']['datadog-trace-agent']['locked_version']
+end
+
+# From a pip-requirements-formatted string, return a hash of 'dep_name' => 'version'
+def read_requirements(file_contents)
+  reqs = Hash.new
+  file_contents.lines.reject do |line|
+    /^#/ === line  # reject comment lines
+  end.collect do |line|
+    /(.+)==([^\s]+)/.match(line)
+  end.compact.each do |match|
+    reqs[match[1].downcase] = match[2]
+  end
+  reqs
+end
+
+def pip_freeze
+  `/opt/datadog-agent/embedded/bin/pip freeze 2> /dev/null`
+end
+
+def is_port_bound(port)
+  if os == :windows
+    port_regex = Regexp.new(port.to_s)
+    port_regex.match(`netstat -n -b -a -p TCP 2>&1`)
+  else
+    system("sudo netstat -lntp | grep #{port} 1>/dev/null")
+  end
+end
+
+
+def read_conf_file
+    conf_path = ""
+    if os == :windows
+      conf_path = "#{ENV['ProgramData']}\\Datadog\\datadog.yaml"
+    else
+      conf_path = '/etc/datadog-agent/datadog.yaml'
+    end
+    puts "cp is #{conf_path}"
+    f = File.read(conf_path)
+    confYaml = YAML.load(f)
+    confYaml
+end
+
+
+shared_examples_for 'Agent' do
+  it_behaves_like 'an installed Agent'
+  it_behaves_like 'a running Agent with no errors'
+  it_behaves_like 'a running Agent with APM'
+  it_behaves_like 'a running Agent with APM manually disabled'
+  it_behaves_like 'an Agent that stops'
+  it_behaves_like 'an Agent that restarts'
+  it_behaves_like 'an Agent that is removed'
+end
+
+
+shared_examples_for "an installed Agent" do
+  it 'has an example config file' do
+    if os != :windows
+      expect(File).to exist('/etc/datadog-agent/datadog.yaml.example')
+    end
+  end
+
+  it 'has a datadog-agent binary in usr/bin' do
+    if os != :windows
+      expect(File).to exist('/usr/bin/datadog-agent')
+    end
+  end
+
+  # We retrieve the value defined in .kitchen.yml because there is no simple way
+  # to set env variables on the target machine or via parameters in Kitchen/Busser
+  # See https://github.com/test-kitchen/test-kitchen/issues/662 for reference
+  let(:skip_windows_signing_check) {
+    if os == :windows
+      dna_json_path = "#{ENV['USERPROFILE']}\\AppData\\Local\\Temp\\kitchen\\dna.json"
+    else
+      dna_json_path = "/tmp/kitchen/dna.json"
+    end
+    JSON.parse(IO.read(dna_json_path)).fetch('dd-agent-rspec').fetch('skip_windows_signing_test')
+  }
+  
+  it 'is properly signed' do
+    puts "swsc is #{skip_windows_signing_check}"
+    if os == :windows and !skip_windows_signing_check
+      # The user in the yaml file is "datadog", however the default test kitchen user is azure.
+      # This allows either to be used without changing the test.
+      msi_path = "#{ENV['USERPROFILE']}\\AppData\\Local\\Temp\\kitchen\\cache\\ddagent-cli.msi"
+      expect(File).to exist(msi_path)
+      output = `powershell -command "get-authenticodesignature #{msi_path}"`
+      signature_hash = "ECCDAE36FDCB654D2CBAB3E8975AA55469F96E4C"
+      expect(output).to include(signature_hash)
+      expect(output).to include("Valid")
+      expect(output).not_to include("NotSigned")
+    end
+  end
+end
+
+shared_examples_for "a running Agent with no errors" do
+  it 'has an agent binary' do
+    if os != :windows
+      expect(File).to exist('/usr/bin/datadog-agent')
+    end
+  end
+
+  it 'is running' do
+    expect(status).to be_truthy
+  end
+
+  it 'has a config file' do
+    if os == :windows
+      conf_path = "#{ENV['ProgramData']}\\Datadog\\datadog.yaml"
+    else
+      conf_path = '/etc/datadog-agent/datadog.yaml'
+    end
+    expect(File).to exist(conf_path)
+  end
+
+  it 'has running checks' do
+    # On systems that use systemd (on which the `start` script returns immediately)
+    # sleep a few seconds to let the collector finish its first run
+    # This seems to happen on windows, too
+    if os != :windows
+      system('command -v systemctl 2>&1 > /dev/null && sleep 300')
+    else
+      sleep 30
+    end
+
+    json_info_output = json_info
+    expect(json_info_output).to have_key("runnerStats")
+    expect(json_info_output['runnerStats']).to have_key("Checks")
+    expect(json_info_output['runnerStats']['Checks']).not_to be_empty
+  end
+
+  it 'has an info command' do
+    # On systems that use systemd (on which the `start` script returns immediately)
+    # sleep a few seconds to let the collector finish its first run
+    # Windows seems to frequently have this same issue
+    if os != :windows
+      system('command -v systemctl 2>&1 > /dev/null && sleep 5')
+    else
+      sleep 5
+    end
+
+    expect(info).to include "Forwarder"
+    expect(info).to include "DogStatsD"
+    expect(info).to include "Host Info"
+  end
+
+  it 'has no errors in the info command' do
+    info_output = info
+    # The api key is invalid. this test ensures there are no other errors
+    info_output = info_output.gsub "[ERROR] API Key is invalid" "API Key is invalid"
+    expect(info_output).to_not include 'ERROR'
+  end
+end
+
+shared_examples_for "a running Agent with APM" do
+  it 'is bound to the port that receives traces by default' do
+    expect(is_port_bound(8126)).to be_truthy
+  end
+end
+
+shared_examples_for "a running Agent with APM manually disabled" do
+  it 'is not bound to the port that receives traces when apm_enabled is set to false' do
+    conf_path = ""
+    if os != :windows
+      conf_path = "/etc/datadog-agent/datadog.yaml"
+    else
+      conf_path = "#{ENV['ProgramData']}\\Datadog\\datadog.yaml"
+    end
+
+    f = File.read(conf_path)
+    confYaml = YAML.load(f)
+    if !confYaml.key("apm_config")
+      confYaml["apm_config"] = {}
+    end
+    confYaml["apm_config"]["enabled"] = false
+    File.write(conf_path, confYaml.to_yaml)
+
+    output = restart
+    if os != :windows
+      expect(output).to be_truthy
+      system 'command -v systemctl 2>&1 > /dev/null || sleep 5 || true'
+    else
+      sleep 5
+    end
+    expect(is_port_bound(8126)).to be_falsey
+  end
+
+  it "doesn't say 'not running' in the info command" do
+    # Until it runs the logs agent by default it will say this
+    # expect(info).to_not include 'not running'
+  end
+end
+
+shared_examples_for 'an Agent that stops' do
+  it 'stops' do
+    output = stop
+    if os != :windows
+      expect(output).to be_truthy
+    end
+    expect(is_running?).to be_falsey
+  end
+
+  it 'has connection refuse in the info command' do
+    if os == :windows
+      expect(info).to include 'No connection could be made'
+    else
+      expect(info).to include 'connection refuse'
+    end
+  end
+
+  it 'is not running any agent processes' do
+    sleep 5 # need to wait for the Agent to stop
+    expect(agent_processes_running?).to be_falsey
+  end
+
+  it 'starts after being stopped' do
+    output = start
+    if os != :windows
+      expect(output).to be_truthy
+    end
+    expect(status).to be_truthy
+  end
+end
+
+shared_examples_for 'an Agent that restarts' do
+  it 'restarts when the agent is running' do
+    if !is_running?
+      start
+    end
+    output = restart
+    if os != :windows
+      expect(output).to be_truthy
+    end
+    expect(is_running?).to be_truthy
+  end
+
+  it 'restarts when the agent is not running' do
+    if is_running?
+      stop
+    end
+    output = restart
+    if os != :windows
+      expect(output).to be_truthy
+    end
+    expect(status).to be_truthy
+  end
+end
+
+shared_examples_for 'an Agent that is removed' do
+  it 'should remove the agent' do
+    if os == :windows
+      # uninstallcmd = "start /wait msiexec /q /x 'C:\\Users\\azure\\AppData\\Local\\Temp\\kitchen\\cache\\ddagent-cli.msi'"
+      uninstallcmd='for /f "usebackq" %n IN (`wmic product where "name like \'datadog%\'" get IdentifyingNumber ^| find "{"`) do start /wait msiexec /log c:\\uninst.log /q /x %n'
+      expect(system(uninstallcmd)).to be_truthy
+    else
+      if system('which apt-get &> /dev/null')
+        expect(system("sudo apt-get -q -y remove datadog-agent > /dev/null")).to be_truthy
+      elsif system('which yum &> /dev/null')
+        expect(system("sudo yum -y remove datadog-agent > /dev/null")).to be_truthy
+      elsif system('which zypper &> /dev/null')
+        expect(system("sudo zypper --non-interactive remove datadog-agent > /dev/null")).to be_truthy
+      else
+        raise 'Unknown package manager'
+      end
+    end
+  end
+
+  it 'should not be running the agent after removal' do
+    sleep 5
+    expect(agent_processes_running?).to be_falsey
+  end
+
+  it 'should remove the agent binary' do
+    if os != :windows
+      agent_path = '/usr/bin/datadog-agent'
+    else
+      agent_path = "C:\\Program Files\\Datadog\\Datadog Agent\\embedded\\agent.exe"
+    end
+    expect(File).not_to exist(agent_path)
+  end
+
+  it 'should remove the trace-agent binary' do
+    if os == :windows
+      trace_agent_path = "C:\\Program Files\\Datadog\\Datadog Agent\\bin\\agent\\trace-agent"
+    else
+      trace_agent_path = '/opt/datadog-agent/bin/trace-agent'
+    end
+    expect(File).not_to exist(trace_agent_path)
+  end
+end
+
+shared_examples_for 'an Agent with APM enabled' do
+    it 'has apm enabled' do
+      confYaml = read_conf_file()
+      expect(confYaml).to have_key("apm_config")
+      expect(confYaml["apm_config"]).to have_key("enabled")
+      expect(confYaml["apm_config"]["enabled"]).to be_truthy
+      expect(is_port_bound(8126)).to be_truthy
+    end
+    it 'has the apm agent running' do
+      expect(is_process_running?("trace-agent.exe")).to be_truthy
+      expect(is_service_running?("datadog-trace-agent")).to be_truthy
+    end
+  end
+  
+  shared_examples_for 'an Agent with logs enabled' do
+    it 'has logs enabled' do
+      confYaml = read_conf_file()
+      expect(confYaml).to have_key("logs_config")
+      expect(confYaml).to have_key("logs_enabled")
+      expect(confYaml["logs_enabled"]).to be_truthy
+    end
+  end
+  
+  shared_examples_for 'an Agent with process enabled' do
+    it 'has process enabled' do
+      confYaml = read_conf_file()
+      expect(confYaml).to have_key("process_config")
+      expect(confYaml["process_config"]).to have_key("enabled")
+      expect(confYaml["process_config"]["enabled"]).to be_truthy
+    end
+    it 'has the process agent running' do
+      expect(is_process_running?("process-agent.exe")).to be_truthy
+      expect(is_service_running?("datadog-process-agent")).to be_truthy
+    end
+  end
+
+  def get_user_sid(uname)
+    output = `powershell -command "(New-Object System.Security.Principal.NTAccount('#{uname}')).Translate([System.Security.Principal.SecurityIdentifier]).value"`.strip
+    output
+  end 
+  
+  def get_sddl_for_object(name) 
+    cmd = "powershell -command \"get-acl -Path \\\"#{name}\\\" | format-list -Property sddl\""
+    outp = `#{cmd}`.gsub("\n", "").gsub(" ", "")
+    sddl = outp.gsub("/\s+/", "").split(":").drop(1).join(":").strip
+    sddl
+  end
+  
+  def equal_sddl?(left, right)
+    # First, split the sddl into the ownership (user and group), and the dacl
+    left_array = left.split("D:")
+    right_array = right.split("D:")
+  
+    # compare the ownership & group.  Must be the same
+    if left_array[0] != right_array[0]
+      return false
+    end
+    left_dacl = left_array[1].scan(/(\([^)]*\))/)
+    right_dacl = right_array[1].scan(/(\([^)]*\))/)
+  
+    
+    # if they're different lengths, they're different
+    if left_dacl.length != right_dacl.length
+      return false
+    end
+  
+    ## now need to break up the DACL list, because they may be listed in different
+    ## orders... the order doesn't matter but the components should be the same.  So..
+  
+    left_dacl.each do |left_entry|
+      found = false
+      right_dacl.each do |right_entry|
+        if left_entry == right_entry
+          found = true
+          right_dacl.delete(right_entry)
+          break
+        end
+      end
+      if !found
+        return false
+      end
+    end
+    return false if right_dacl.length != 0
+    return true
+  end
+  def get_security_settings
+    fname = "secout.txt"
+    system "secedit /export /cfg  #{fname} /areas USER_RIGHTS"
+    data = Hash.new
+    
+    utext = File.open(fname).read
+    text = utext.unpack("v*").pack("U*") 
+    text.each_line do |line|
+      next unless line.include? "="
+      kv = line.strip.split("=")
+      data[kv[0].strip] = kv[1].strip
+    end
+    #File::delete(fname)
+    data
+  end
+  
+  def check_has_security_right(data, k, name)
+    right = data[k]
+    unless right
+      return false
+    end
+    rights = right.split(",")
+    rights.each do |r|
+      return true if r == name
+    end
+    false
+  end
+  
+  def check_is_user_in_group(user, group)
+    members = `net localgroup "#{group}"`
+    members.split(/\n+/).each do |line|
+      return true if line.strip == user
+    end
+    false
+  end
+  
+  def get_username_from_tasklist(exename)
+    # output of tasklist command is
+    # Image Name  PID  Session Name  Session#  Mem Usage Status  User Name  CPU Time  Window Title
+    output = `tasklist /v /fi "imagename eq #{exename}" /nh`.gsub("\n", "").gsub("NT AUTHORITY", "NT_AUTHORITY")
+  
+    # for the above, the system user comes out as "NT AUTHORITY\System", which confuses the split 
+    # below.  So special case it, and get rid of the space
+  
+    #username is fully qualified <domain>\username
+    uname = output.split(' ')[7].partition('\\').last
+    uname
+  end
