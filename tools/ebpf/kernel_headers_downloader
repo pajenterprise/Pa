@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# The code below is meant to be executed from system-probe init-containers
+
+set -e
+
+function install_yum {
+    if ! hash yum > /dev/null 2>&1; then
+        unsupported "yum"
+    fi
+
+    rm -rf /etc/yum
+    cp -R /host/etc/yum /etc
+
+    rm -rf /etc/yum.repos.d
+    cp -R /host/etc/yum.repos.d /etc
+
+    mkdir -p /etc/yum/vars
+    echo "$1" > /etc/yum/vars/releasever
+
+    # TODO: find a reliable way to copy GPG keys from the host
+    yum install --nogpgcheck -y kernel-headers-$(uname -r)
+}
+
+function install_apt {
+    if ! hash apt > /dev/null 2>&1; then
+        unsupported "apt"
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    rm -rf  /etc/apt
+    cp -R /host/apt /etc
+
+    apt-get update < /dev/null
+    pushd $(mktemp -d)
+    apt-get -y download `apt-cache depends linux-headers-$(uname -r) | grep -o 'linux-headers-.*'`
+    for pkg in `ls -1`; do dpkg -x $pkg /; done
+    popd
+}
+
+function unsupported {
+    echo "this init-container doesn't support `$1`. skipping."
+    exit 0
+}
+
+# Debian Family
+if [ -s /host/etc/debian_version ]; then
+    install_apt
+    exit 0
+fi
+
+# Redhat/CentOS Family
+if [ -s /host/etc/system-release-cpe ]; then
+    if grep -q amazon /host/etc/system-release-cpe; then
+        VERSION_FIELD_IDX=6
+    else
+        VERSION_FIELD_IDX=5
+    fi
+
+    VERSION=$(cat /host/etc/system-release-cpe | cut -d':' -f${VERSION_FIELD_IDX} | cut -d'.' -f1 | sed 's/[^0-9]*//g')
+    install_yum $VERSION
+    exit 0
+fi
