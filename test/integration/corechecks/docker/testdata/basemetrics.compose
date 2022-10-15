@@ -1,0 +1,13 @@
+version: '2'
+services:
+  pause:
+    image: "kubernetes/pause:latest"
+  redis:
+    image: "datadog/docker-library:redis_3_2_11-alpine"
+    labels:
+        low.card.label: "redislow"
+        high.card.label: "redishigh"
+    environment:
+        LOW_CARD_ENV: "redislowenv"
+        HIGH_CARD_ENV: "redishighenv"
+    mem_limit: 32000000
