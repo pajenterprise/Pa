@@ -1,0 +1,175 @@
+include: 'https://gitlab-templates.ddbuild.io/slack-notifier/v1/template.yml'
+
+default:
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - unknown_failure
+      - api_failure
+
+stages:
+  - deploy_invalidate
+
+variables:
+  # The SRC_PATH is in the GOPATH of the builders which
+  # currently is /go
+  SRC_PATH: /go/src/github.com/DataDog/datadog-agent
+  # Directory in which we execute the omnibus build.
+  # For an unknown reason, it does not go well with
+  # a ruby dependency if we build directly into $CI_PROJECT_DIR/.omnibus
+  OMNIBUS_BASE_DIR: /.omnibus
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR: $CI_PROJECT_DIR/.omnibus/pkg/
+  # Directory in which we execute the omnibus build for SUSE
+  # as we want to separate the RPM built for this distro.
+  OMNIBUS_BASE_DIR_SUSE: /.omnibus/suse
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR_SUSE: $CI_PROJECT_DIR/.omnibus/suse/pkg
+  OMNIBUS_BASE_DIR_WIN: c:\omni-base\$CI_RUNNER_ID
+  OMNIBUS_BASE_DIR_WIN_OMNIBUS: c:/omni-base/$CI_RUNNER_ID
+  DD_AGENT_TESTING_DIR: $CI_PROJECT_DIR/test/kitchen
+  STATIC_BINARIES_DIR: bin/static
+  DOGSTATSD_BINARIES_DIR: bin/dogstatsd
+  AGENT_BINARIES_DIR: bin/agent
+  CLUSTER_AGENT_BINARIES_DIR: bin/datadog-cluster-agent
+  CLUSTER_AGENT_CLOUDFOUNDRY_BINARIES_DIR: bin/datadog-cluster-agent-cloudfoundry
+  SYSTEM_PROBE_BINARIES_DIR: bin/system-probe
+  DEB_S3_BUCKET: apt.datad0g.com
+  RPM_S3_BUCKET: yum.datad0g.com
+  WIN_S3_BUCKET: dd-agent-mstesting
+  PROCESS_S3_BUCKET: datad0g-process-agent
+  ANDROID_S3_BUCKET: dd-agent-androidtesting
+  DEB_RPM_BUCKET_BRANCH: nightly  # branch of the DEB_S3_BUCKET and RPM_S3_BUCKET repos to release to, 'nightly' or 'beta'
+  DEB_TESTING_S3_BUCKET: apttesting.datad0g.com
+  RPM_TESTING_S3_BUCKET: yumtesting.datad0g.com
+  WINDOWS_TESTING_S3_BUCKET_A6: pipelines/A6/$CI_PIPELINE_ID
+  WINDOWS_TESTING_S3_BUCKET_A7: pipelines/A7/$CI_PIPELINE_ID
+  WINDOWS_BUILDS_S3_BUCKET: $WIN_S3_BUCKET/builds
+  ANDROID_BUILDS_S3_BUCKET: $ANDROID_S3_BUCKET/builds
+  DEB_RPM_TESTING_BUCKET_BRANCH: testing  # branch of the DEB_TESTING_S3_BUCKET and RPM_TESTING_S3_BUCKET repos to release to, 'testing'
+  DD_REPO_BRANCH_NAME: $CI_COMMIT_REF_NAME
+  S3_CP_OPTIONS: --only-show-errors --region us-east-1 --sse AES256
+  S3_CP_CMD: aws s3 cp $S3_CP_OPTIONS
+  S3_ARTIFACTS_URI: s3://dd-ci-artefacts-build-stable/$CI_PROJECT_NAME/$CI_PIPELINE_ID
+## comment out both lines below (S3_OMNIBUS_CACHE_BUCKET and USE_S3_CACHING) to allow
+## build to succeed with S3 caching disabled.
+  S3_OMNIBUS_CACHE_BUCKET: dd-ci-datadog-agent-omnibus-cache-build-stable
+  USE_S3_CACHING: --omnibus-s3-cache
+  S3_DSD6_URI: s3://dsd6-staging
+  RELEASE_VERSION_6: nightly
+  RELEASE_VERSION_7: nightly-a7
+  DATADOG_AGENT_BUILDIMAGES: v2653795-e59e3fd
+  DATADOG_AGENT_BUILDERS: v2713319-f266f81
+  DATADOG_AGENT_WINBUILDIMAGES: v2653795-e59e3fd
+  DATADOG_AGENT_WINBUILDERS: v2348149-ba6640d
+  DATADOG_AGENT_ARMBUILDIMAGES: v2653795-e59e3fd
+  DATADOG_AGENT_SYSPROBE_BUILDIMAGES: v2653795-e59e3fd
+  BCC_VERSION: v0.12.0
+  SYSTEM_PROBE_GO_VERSION: 1.13.11
+
+#
+# Condition mixins for simplification of rules
+#
+
+.if_master_branch: &if_master_branch
+  if: $CI_COMMIT_BRANCH == "master"
+
+.if_not_master_branch: &if_not_master_branch
+  if: $CI_COMMIT_BRANCH != "master"
+
+.if_tagged_commit: &if_tagged_commit
+  if: $CI_COMMIT_TAG != null
+
+.if_not_tagged_commit: &if_not_tagged_commit
+  if: $CI_COMMIT_TAG == null
+
+# run job only when triggered by an external tool (ex: Jenkins). This is used
+# for jobs that run both on nightlies and tags
+.if_triggered: &if_triggered
+  if: $CI_PIPELINE_SOURCE == "trigger"
+
+.if_not_triggered: &if_not_triggered
+  if: $CI_PIPELINE_SOURCE != "trigger"
+
+# anchor to trigger test kitchen setup, run, and cleanup (so all stages
+# are run if one stage is run).  Triggers as defined:
+# - master
+# - tags (a tagged build)
+# - triggers (as above, when triggered by an external tool like jenkins)
+# - web (when the build is triggered by a specific build request through the
+#        web interface.  This way, if a kitchen run is desired on a specific branch,
+#        it can be triggered by requesting a specific build)
+#
+.if_test_kitchen_triggered: &if_test_kitchen_triggered
+  if: $CI_COMMIT_BRANCH == "master" || $CI_COMMIT_TAG != null || $CI_PIPELINE_SOURCE == "trigger" || $CI_PIPELINE_SOURCE == "web"
+
+.if_not_test_kitchen_triggered: &if_not_test_kitchen_triggered
+  if: $CI_COMMIT_BRANCH != "master" && $CI_COMMIT_TAG == null && $CI_PIPELINE_SOURCE != "trigger" && $CI_PIPELINE_SOURCE != "web"
+
+# true only when triggered by an external tool (ex: Jenkins) and when
+# RELEASE_VERSION_X is NOT "nightly". In this setting we are building either a
+# new tagged version of the agent (an RC for example). In both cases the
+# artifacts should be uploaded to our staging repository.
+.if_triggered_on_tag_6: &if_triggered_on_tag_6
+  # no  RELEASE_VERSION means a nightly build for omnibus
+  if: $CI_PIPELINE_SOURCE == "trigger" && $RELEASE_VERSION_6 != "nightly" && $RELEASE_VERSION_6 != ""
+
+.if_not_triggered_on_tag_6: &if_not_triggered_on_tag_6
+  # no  RELEASE_VERSION means a nightly build for omnibus
+  if: $CI_PIPELINE_SOURCE != "trigger" || $RELEASE_VERSION_6 == "nightly" || $RELEASE_VERSION_6 == ""
+
+.if_triggered_on_tag_7: &if_triggered_on_tag_7
+  # no  RELEASE_VERSION means a nightly build for omnibus
+  if: $CI_PIPELINE_SOURCE == "trigger" && $RELEASE_VERSION_7 != "nightly-a7" && $RELEASE_VERSION_7 != ""
+
+.if_not_triggered_on_tag_7: &if_not_triggered_on_tag_7
+  # no  RELEASE_VERSION means a nightly build for omnibus
+  if: $CI_PIPELINE_SOURCE != "trigger" || $RELEASE_VERSION_7 == "nightly-a7" || $RELEASE_VERSION_7 == ""
+
+# true only when triggered by an external tool (ex: Jenkins) and when
+# RELEASE_VERSION_X is "nightly". In this setting we build from master and update
+# the nightly build for windows, linux and docker.
+.if_triggered_on_nightly: &if_triggered_on_nightly
+  if: $CI_PIPELINE_SOURCE == "trigger" && $RELEASE_VERSION_6 == "nightly" && $RELEASE_VERSION_7 == "nightly-a7"
+
+.if_not_triggered_on_nightly: &if_not_triggered_on_nightly
+  if: $CI_PIPELINE_SOURCE != "trigger" || $RELEASE_VERSION_6 != "nightly" || $RELEASE_VERSION_7 != "nightly-a7"
+
+# true only when RELEASE_VERSION_X is not set
+.if_version_6: &if_version_6
+  if: $RELEASE_VERSION_6 != ""
+
+.if_not_version_6: &if_not_version_6
+  if: $RELEASE_VERSION_6 == ""
+
+.if_version_7: &if_version_7
+  if: $RELEASE_VERSION_7 != ""
+
+.if_not_version_7: &if_not_version_7
+  if: $RELEASE_VERSION_7 == ""
+
+#
+# Cloudfront cache invalidation:
+# Duplicated in 2 jobs: one that runs "on success" of the previous stage, and one that runs "on failure" of previous stages.
+# Compared to having 1 single job that runs "always", this setup guarantees that if earlier stages first failed and were
+# then retried successfully, the cloudfront invalidation will also run after the successful retry.
+#
+.deploy_cloudfront_invalidate: &deploy_cloudfront_invalidate
+  stage: deploy_invalidate
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS
+  tags: [ "runner:main", "size:large" ]
+  dependencies: []
+  script:
+    - cd ~/deploy_scripts/cloudfront-invalidation
+    - "REPO=apt REPO_ENV=staging PATTERN_SUBSTRING=/$DEB_RPM_BUCKET_BRANCH/ RUNNER_ENV=build-stable ./invalidate.sh"
+    - "REPO=yum REPO_ENV=staging PATTERN_SUBSTRING=/$DEB_RPM_BUCKET_BRANCH/ RUNNER_ENV=build-stable ./invalidate.sh"
+
+deploy_cloudfront_invalidate_on_success:
+  # rules:
+  #   - <<: *if_triggered
+  #     when: on_success
+  <<: *deploy_cloudfront_invalidate
