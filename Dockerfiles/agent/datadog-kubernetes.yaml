@@ -1,0 +1,13 @@
+## Provides autodetected defaults, for kubernetes environments,
+## please see datadog.yaml.example for all supported options
+
+# Autodiscovery
+# TODO: Switch to kubelet listener
+listeners:
+  - name: docker
+
+config_providers:
+# The kubelet provider handles templates embedded in pod annotations, see
+# https://docs.datadoghq.com/guides/autodiscovery/#template-source-kubernetes-pod-annotations
+  - name: kubelet
+    polling: true
