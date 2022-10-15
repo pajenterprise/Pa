@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+inv -e fmt --hook --targets="$*"
