@@ -1,0 +1,46 @@
+include: 'https://gitlab-templates.ddbuild.io/slack-notifier/v1/template.yml'
+
+default:
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - unknown_failure
+      - api_failure
+
+stages:
+  - part1
+  - part2
+  - part3
+
+.base:
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:v2287129-4816dc7
+  tags: [ "runner:main", "size:2xlarge" ]
+
+job1:
+  extends: .base
+  stage: part1
+  script:
+    - echo "Manual job 1"
+  when: manual
+
+job2:
+  extends: .base
+  stage: part1
+  script:
+    - echo "Manual job 2"
+  when: manual
+
+job3:
+  extends: .base
+  stage: part2
+  script:
+    - echo "Dependent manual job"
+  when: manual
+
+job4:
+  extends: .base
+  stage: part3
+  script:
+    - "Not manual job"
