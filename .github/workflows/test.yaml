@@ -1,0 +1,22 @@
+name: MacOS Agent build
+
+on: push
+
+jobs:
+  macos_build:
+    runs-on: macos-10.15
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Set up builder
+      run: |
+        bash -c "$(curl -L https://raw.githubusercontent.com/DataDog/datadog-agent-buildimages/f43e0e081e9a54fea3241ef0efde28374981f7a0/macos/builder_setup.sh)"
+    - name: Run omnibus build
+      env:
+        RELEASE_VERSION: "nightly-a7"
+        AGENT_MAJOR_VERSION: "7"
+        PYTHON_RUNTIMES: "3"
+        VERSION: ${{ github.sha }}
+      run: |
+        bash -c "$(curl -L https://raw.githubusercontent.com/DataDog/datadog-agent-buildimages/f43e0e081e9a54fea3241ef0efde28374981f7a0/macos/build_script.sh)"
