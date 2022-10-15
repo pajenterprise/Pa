@@ -1,0 +1,1700 @@
+".agent_build_common_deb":
+  "artifacts": &id003
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "script": &id004
+  - "echo \"About to build for $RELEASE_VERSION\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/system-probe.${PACKAGE_ARCH} /tmp/system-probe"
+  - "chmod 755 /tmp/system-probe"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/libbcc-${PACKAGE_ARCH}.tar.xz /tmp/libbcc.tar.xz"
+  - "inv -e agent.omnibus-build --release-version \"$RELEASE_VERSION\" --major-version\
+    \ \"$AGENT_MAJOR_VERSION\" --python-runtimes \"$PYTHON_RUNTIMES\" --base-dir $OMNIBUS_BASE_DIR\
+    \ ${USE_S3_CACHING} --skip-deps --system-probe-bin=/tmp/system-probe --libbcc-tarball=/tmp/libbcc.tar.xz"
+  - "$S3_CP_CMD $OMNIBUS_BASE_DIR/pkg/datadog-agent_*_${PACKAGE_ARCH}.deb $S3_ARTIFACTS_URI/$DESTINATION_DEB"
+  - "$S3_CP_CMD $OMNIBUS_BASE_DIR/pkg/datadog-agent-dbg_*_${PACKAGE_ARCH}.deb $S3_ARTIFACTS_URI/$DESTINATION_DBG_DEB"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/datadog-agent*_${PACKAGE_ARCH}.deb{,.metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+".agent_build_common_rpm":
+  "artifacts": &id005
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "script": &id006
+  - "echo \"About to build for $RELEASE_VERSION\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key_e09422b3\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase_e09422b3 --with-decryption --query\
+    \ \"Parameter.Value\" --out text)"
+  - "set -x"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/system-probe.${PACKAGE_ARCH} /tmp/system-probe"
+  - "chmod 755 /tmp/system-probe"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/libbcc-${PACKAGE_ARCH}.tar.xz /tmp/libbcc.tar.xz"
+  - "inv -e agent.omnibus-build --release-version \"$RELEASE_VERSION\" --major-version\
+    \ \"$AGENT_MAJOR_VERSION\" --python-runtimes \"$PYTHON_RUNTIMES\" --base-dir $OMNIBUS_BASE_DIR\
+    \  ${USE_S3_CACHING} --skip-deps --system-probe-bin=/tmp/system-probe --libbcc-tarball=/tmp/libbcc.tar.xz"
+  - "find $OMNIBUS_BASE_DIR/pkg -type f -name '*.rpm' ! -name '*dbg*.rpm' -print0\
+    \ | xargs -0 -I '{}' rpm -i '{}'"
+  - "find $OMNIBUS_BASE_DIR/pkg -type f -name '*dbg*.rpm' -print0 | xargs -0 -I '{}'\
+    \ rpm -i '{}'"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+".agent_build_common_suse_rpm":
+  "artifacts": &id007
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR_SUSE"
+  "script": &id008
+  - "echo \"About to build for $RELEASE_VERSION\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR_SUSE/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key_e09422b3\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase_e09422b3 --with-decryption --query\
+    \ \"Parameter.Value\" --out text)"
+  - "set -x"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/system-probe.${PACKAGE_ARCH} /tmp/system-probe"
+  - "chmod 755 /tmp/system-probe"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/libbcc-${PACKAGE_ARCH}.tar.xz /tmp/libbcc.tar.xz"
+  - "inv -e agent.omnibus-build --release-version \"$RELEASE_VERSION\" --major-version\
+    \ \"$AGENT_MAJOR_VERSION\" --python-runtimes \"$PYTHON_RUNTIMES\" --base-dir $OMNIBUS_BASE_DIR_SUSE\
+    \ ${USE_S3_CACHING} --skip-deps --system-probe-bin=/tmp/system-probe --libbcc-tarball=/tmp/libbcc.tar.xz"
+  - "find $OMNIBUS_BASE_DIR_SUSE/pkg -type f -name '*.rpm' ! -name '*dbg*.rpm' -print0\
+    \ | xargs -0 -I '{}' zypper in '{}'"
+  - "find $OMNIBUS_BASE_DIR_SUSE/pkg -type f -name '*dbg*.rpm' -print0 | xargs -0\
+    \ -I '{}' zypper in '{}'"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR_SUSE && cp $OMNIBUS_BASE_DIR_SUSE/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR_SUSE"
+".build_libbcc_common":
+  "needs": []
+  "script":
+  - "git clone -b \"$BCC_VERSION\" --depth=1 https://github.com/iovisor/bcc.git /tmp/bcc"
+  - "cd /tmp/bcc"
+  - "patch -p1 < \"$CI_PROJECT_DIR\"/omnibus/config/software/libbcc_compat.patch"
+  - "mkdir /tmp/bcc/build"
+  - "cd /tmp/bcc/build"
+  - "cmake .. -DCMAKE_INSTALL_PREFIX=/opt/libbcc -DCMAKE_EXE_LINKER_FLAGS='-Wl,-rpath,/opt/datadog-agent/embedded/lib'\
+    \ -DCMAKE_SHARED_LINKER_FLAGS='-Wl,-rpath,/opt/datadog-agent/embedded/lib'"
+  - "make -j 4"
+  - "objdump -p src/cc/libbcc.so | grep GLIBC_2.29 && exit 1"
+  - "objdump -p src/cc/libbcc.so | grep GLIBC_2.26 && exit 1"
+  - "make install"
+  - "cd /opt/libbcc"
+  - "chmod go-rwx lib/libbcc*"
+  - "rm -rf share/bcc/examples share/bcc/introspection share/bcc/man share/bcc/tools"
+  - "cp $(ldd lib/libbcc.so | awk '$1 ~ /^libtinfo/ {system(\"dirname \" $3)}')/libtinfo*\
+    \ lib"
+  - "tar cvaf /tmp/libbcc.tar.xz ."
+  - "$S3_CP_CMD /tmp/libbcc.tar.xz $S3_ARTIFACTS_URI/libbcc-$ARCH.tar.xz"
+  "stage": "deps_build"
+".docker_build_job_definition_amd64":
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/docker:v2718644-9ce6565-18.09.6-py3"
+  "tags":
+  - "runner:docker"
+  - "size:large"
+  "variables":
+    "ARCH": "amd64"
+".docker_build_job_definition_arm64":
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/docker:v2718787-3888eda-18.09.6-arm64-py3"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "ARCH": "arm64"
+".docker_hub_variables":
+  "DELEGATION_KEY_SSM_KEY": "docker_hub_signing_key"
+  "DELEGATION_PASS_SSM_KEY": "docker_hub_signing_pass"
+  "DOCKER_REGISTRY_LOGIN_SSM_KEY": "docker_hub_login"
+  "DOCKER_REGISTRY_PWD_SSM_KEY": "docker_hub_pwd"
+  "DOCKER_REGISTRY_URL": "docker.io"
+  "SRC_AGENT": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent"
+  "SRC_DCA": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/cluster-agent"
+  "SRC_DSD": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/dogstatsd"
+".go_deps":
+  "artifacts":
+    "expire_in": "1 day"
+    "paths":
+    - "$CI_PROJECT_DIR/go-pkg.tar.gz"
+    - "$CI_PROJECT_DIR/go-bin.tar.gz"
+    - "$CI_PROJECT_DIR/vendor.tar.gz"
+  "needs": []
+  "script":
+  - "inv -e deps --verbose"
+  - "cd $GOPATH/pkg && tar czf $CI_PROJECT_DIR/go-pkg.tar.gz ."
+  - "cd $GOPATH/bin && tar czf $CI_PROJECT_DIR/go-bin.tar.gz ."
+  - "cd $CI_PROJECT_DIR/vendor && tar czf $CI_PROJECT_DIR/vendor.tar.gz ."
+  "stage": "deps_fetch"
+".if_master_branch":
+  "if": "$CI_COMMIT_BRANCH == \"master\""
+".if_not_master_branch":
+  "if": "$CI_COMMIT_BRANCH != \"master\""
+".if_not_tagged_commit":
+  "if": "$CI_COMMIT_TAG == null"
+".if_not_test_kitchen_triggered":
+  "if": "$CI_COMMIT_BRANCH != \"master\" && $CI_COMMIT_TAG == null && $CI_PIPELINE_SOURCE\
+    \ != \"trigger\" && $CI_PIPELINE_SOURCE != \"web\""
+".if_not_triggered":
+  "if": "$CI_PIPELINE_SOURCE != \"trigger\""
+".if_not_triggered_on_nightly":
+  "if": "$CI_PIPELINE_SOURCE != \"trigger\" || $RELEASE_VERSION_6 != \"nightly\" ||\
+    \ $RELEASE_VERSION_7 != \"nightly-a7\""
+".if_not_triggered_on_tag_6":
+  "if": "$CI_PIPELINE_SOURCE != \"trigger\" || $RELEASE_VERSION_6 == \"nightly\" ||\
+    \ $RELEASE_VERSION_6 == \"\""
+".if_not_triggered_on_tag_7":
+  "if": "$CI_PIPELINE_SOURCE != \"trigger\" || $RELEASE_VERSION_7 == \"nightly-a7\"\
+    \ || $RELEASE_VERSION_7 == \"\""
+".if_not_version_6":
+  "if": "$RELEASE_VERSION_6 == \"\""
+".if_not_version_7":
+  "if": "$RELEASE_VERSION_7 == \"\""
+".if_tagged_commit":
+  "if": "$CI_COMMIT_TAG != null"
+".if_test_kitchen_triggered":
+  "if": "$CI_COMMIT_BRANCH == \"master\" || $CI_COMMIT_TAG != null || $CI_PIPELINE_SOURCE\
+    \ == \"trigger\" || $CI_PIPELINE_SOURCE == \"web\""
+".if_triggered":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\""
+".if_triggered_6":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\" && $RELEASE_VERSION_6 != \"\""
+".if_triggered_7":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\" && $RELEASE_VERSION_7 != \"\""
+".if_triggered_on_nightly":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\" && $RELEASE_VERSION_6 == \"nightly\" &&\
+    \ $RELEASE_VERSION_7 == \"nightly-a7\""
+".if_triggered_on_tag_6":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\" && $RELEASE_VERSION_6 != \"nightly\" &&\
+    \ $RELEASE_VERSION_6 != \"\""
+".if_triggered_on_tag_7":
+  "if": "$CI_PIPELINE_SOURCE == \"trigger\" && $RELEASE_VERSION_7 != \"nightly-a7\"\
+    \ && $RELEASE_VERSION_7 != \"\""
+".if_version_6":
+  "if": "$RELEASE_VERSION_6 != \"\""
+".if_version_7":
+  "if": "$RELEASE_VERSION_7 != \"\""
+".iot_agent_build_common_deb":
+  "artifacts": &id009
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "script": &id010
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "echo \"About to build for $RELEASE_VERSION_7\""
+  - "echo \"Detected host architecture $(uname -m)\""
+  - "echo \"Target architecture ${DD_TARGET_ARCH:=amd64}\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "inv -e agent.omnibus-build --iot --log-level debug --release-version \"$RELEASE_VERSION_7\"\
+    \ --major-version 7 --base-dir $OMNIBUS_BASE_DIR --skip-deps"
+  - "find $OMNIBUS_BASE_DIR/pkg"
+  - "find $OMNIBUS_BASE_DIR/pkg -name \"datadog-iot-agent*_${PACKAGE_ARCH}.deb\" -exec\
+    \ dpkg -c {} \\;"
+  - "$S3_CP_CMD $OMNIBUS_BASE_DIR/pkg/datadog-iot-agent*_${PACKAGE_ARCH}.deb $S3_ARTIFACTS_URI/$DESTINATION_DEB"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/datadog-iot-agent*_${PACKAGE_ARCH}.deb{,.metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+".iot_agent_build_common_rpm":
+  "artifacts": &id011
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "script": &id012
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "echo \"About to build iot agent for $RELEASE_VERSION_7\""
+  - "echo \"Detected host architecture $(uname -m)\""
+  - "echo \"Target architecture ${DD_TARGET_ARCH:=amd64}\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key_e09422b3\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase_e09422b3 --with-decryption --query\
+    \ \"Parameter.Value\" --out text)"
+  - "set -x"
+  - "inv -e agent.omnibus-build --iot --log-level debug --release-version \"$RELEASE_VERSION_7\"\
+    \ --major-version 7 --base-dir $OMNIBUS_BASE_DIR --skip-deps"
+  - "ls $OMNIBUS_BASE_DIR/pkg/"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+".kitchen_agent_a6":
+  "artifacts": &id001
+    "expire_in": "2 weeks"
+    "paths":
+    - "$CI_PROJECT_DIR/kitchen_logs"
+    "when": "always"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "retry": !!int "1"
+  "stage": "testkitchen_testing"
+  "tags": &id002
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+".kitchen_agent_a7":
+  "artifacts": *id001
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "retry": !!int "1"
+  "stage": "testkitchen_testing"
+  "tags": *id002
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+".kitchen_azure_location_central_us":
+  "variables":
+    "AZURE_LOCATION": "Central US"
+".kitchen_azure_location_north_central_us":
+  "variables":
+    "AZURE_LOCATION": "North Central US"
+".kitchen_azure_location_south_central_us":
+  "variables":
+    "AZURE_LOCATION": "South Central US"
+".kitchen_azure_location_west_central_us":
+  "variables":
+    "AZURE_LOCATION": "West Central US"
+".kitchen_cleanup_azure_common":
+  "allow_failure": !!bool "true"
+  "before_script": &id013
+  - "rsync -azr --delete ./ $SRC_PATH"
+  "dependencies": &id014 []
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "script": &id015
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/clean.sh"
+  "stage": "testkitchen_cleanup"
+  "tags": &id016
+  - "runner:main"
+  - "size:large"
+".kitchen_cleanup_s3_common":
+  "allow_failure": !!bool "true"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "script": &id017
+  - "aws s3 rm s3://$DEB_TESTING_S3_BUCKET/dists/pipeline-$DD_PIPELINE_ID --recursive"
+  - "aws s3 rm s3://$RPM_TESTING_S3_BUCKET/testing/pipeline-$DD_PIPELINE_ID --recursive"
+  - "aws s3 rm s3://$RPM_TESTING_S3_BUCKET/testing/suse/pipeline-$DD_PIPELINE_ID --recursive"
+  - "if [ $AGENT_MAJOR_VERSION == \"7\" ]; then export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A7;\
+    \ else export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A6; fi"
+  - "aws s3 rm s3://$WIN_S3_BUCKET/$WINDOWS_TESTING_S3_BUCKET --recursive"
+  - "cd $OMNIBUS_PACKAGE_DIR"
+  - "for deb in $(ls *amd64.deb); do aws s3 rm s3://$DEB_TESTING_S3_BUCKET/pool/d/da/$deb\
+    \ --recursive; done"
+  "stage": "testkitchen_cleanup"
+  "tags": &id018
+  - "runner:main"
+  - "size:large"
+".kitchen_common":
+  "artifacts": *id001
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "retry": !!int "1"
+  "stage": "testkitchen_testing"
+  "tags": *id002
+".kitchen_datadog_agent_flavor":
+  "variables":
+    "AGENT_FLAVOR": "datadog-agent"
+".kitchen_datadog_dogstatsd_flavor":
+  "variables":
+    "AGENT_FLAVOR": "datadog-dogstatsd"
+".kitchen_datadog_iot_agent_flavor":
+  "variables":
+    "AGENT_FLAVOR": "datadog-iot-agent"
+".kitchen_os_centos":
+  "before_script":
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"centos-69,urn,OpenLogic:CentOS:6.9:6.9.20180530\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|centos-77,urn,OpenLogic:CentOS:7.7:7.7.201912090\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|rhel-81,urn,RedHat:RHEL:8.1:8.1.2020020415\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+".kitchen_os_debian":
+  "before_script":
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"debian-8,urn,credativ:Debian:8:8.20190313.0\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|debian-9,urn,credativ:Debian:9:9.20190515.0\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|debian-10,urn,Debian:debian-10:10:0.20190709.401\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+".kitchen_os_suse":
+  "before_script":
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"sles-12,urn,SUSE:SLES-BYOS:12-SP4:2019.11.13\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|sles-15,urn,SUSE:SLES-BYOS:15:2019.11.15\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+".kitchen_os_ubuntu":
+  "before_script":
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"ubuntu-14-04,urn,Canonical:UbuntuServer:14.04.5-LTS:14.04.201905140\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|ubuntu-16-04,urn,Canonical:UbuntuServer:16.04.0-LTS:16.04.201906170\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|ubuntu-18-04,urn,Canonical:UbuntuServer:18.04-LTS:18.04.201906040\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|ubuntu-20-04,urn,Canonical:0001-com-ubuntu-server-focal:20_04-lts:20.04.202004230\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+".kitchen_os_windows":
+  "before_script":
+  - "if [ $AGENT_MAJOR_VERSION == \"7\" ]; then export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A7;\
+    \ else export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A6; fi"
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"win2008r2,id,/subscriptions/8c56d827-5f07-45ce-8f2b-6c5001db5c6f/resourceGroups/kitchen-test-images/providers/Microsoft.Compute/galleries/kitchenimages/images/Windows2008-R2-SP1/versions/1.0.0\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|win2012,urn,MicrosoftWindowsServer:WindowsServer:2012-Datacenter:3.127.20190410\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|win2012r2,urn,MicrosoftWindowsServer:WindowsServer:2012-R2-Datacenter:4.127.20190416\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|win2016,urn,MicrosoftWindowsServer:WindowsServer:2016-Datacenter-Server-Core:2016.127.20190416\""
+  - "export TEST_PLATFORMS=\"$TEST_PLATFORMS|win2019,urn,MicrosoftWindowsServer:WindowsServer:2019-Datacenter-Core:2019.0.20190410\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+".kitchen_scenario_centos_a6":
+  "extends":
+  - ".kitchen_os_centos"
+  - ".kitchen_agent_a6"
+  "needs":
+  - "deploy_rpm_testing-a6"
+".kitchen_scenario_centos_a7":
+  "extends":
+  - ".kitchen_os_centos"
+  - ".kitchen_agent_a7"
+  "needs":
+  - "deploy_rpm_testing-a7"
+".kitchen_scenario_debian_a6":
+  "extends":
+  - ".kitchen_os_debian"
+  - ".kitchen_agent_a6"
+  "needs":
+  - "deploy_deb_testing-a6"
+".kitchen_scenario_debian_a7":
+  "extends":
+  - ".kitchen_os_debian"
+  - ".kitchen_agent_a7"
+  "needs":
+  - "deploy_deb_testing-a7"
+".kitchen_scenario_suse_a6":
+  "extends":
+  - ".kitchen_os_suse"
+  - ".kitchen_agent_a6"
+  "needs":
+  - "deploy_suse_rpm_testing-a6"
+".kitchen_scenario_suse_a7":
+  "extends":
+  - ".kitchen_os_suse"
+  - ".kitchen_agent_a7"
+  "needs":
+  - "deploy_suse_rpm_testing-a7"
+".kitchen_scenario_ubuntu_a6":
+  "extends":
+  - ".kitchen_os_ubuntu"
+  - ".kitchen_agent_a6"
+  "needs":
+  - "deploy_deb_testing-a6"
+".kitchen_scenario_ubuntu_a7":
+  "extends":
+  - ".kitchen_os_ubuntu"
+  - ".kitchen_agent_a7"
+  "needs":
+  - "deploy_deb_testing-a7"
+".kitchen_scenario_windows_a6":
+  "extends":
+  - ".kitchen_os_windows"
+  - ".kitchen_agent_a6"
+  "needs":
+  - "deploy_windows_testing-a6"
+".kitchen_scenario_windows_a7":
+  "extends":
+  - ".kitchen_os_windows"
+  - ".kitchen_agent_a7"
+  "needs":
+  - "deploy_windows_testing-a7"
+".kitchen_test_chef":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh chef-test $AGENT_MAJOR_VERSION"
+".kitchen_test_chef_agent":
+  "extends":
+  - ".kitchen_test_chef"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_north_central_us"
+".kitchen_test_install_script":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh install-script-test $AGENT_MAJOR_VERSION"
+".kitchen_test_install_script_agent":
+  "extends":
+  - ".kitchen_test_install_script"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_south_central_us"
+".kitchen_test_install_script_dogstatsd":
+  "extends":
+  - ".kitchen_test_install_script"
+  - ".kitchen_datadog_dogstatsd_flavor"
+  - ".kitchen_azure_location_west_central_us"
+".kitchen_test_install_script_iot_agent":
+  "extends":
+  - ".kitchen_test_install_script"
+  - ".kitchen_datadog_iot_agent_flavor"
+  - ".kitchen_azure_location_west_central_us"
+".kitchen_test_step_by_step":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh step-by-step-test $AGENT_MAJOR_VERSION"
+".kitchen_test_step_by_step_agent":
+  "extends":
+  - ".kitchen_test_step_by_step"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_central_us"
+".kitchen_test_upgrade5":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh upgrade5-test $AGENT_MAJOR_VERSION"
+".kitchen_test_upgrade5_agent":
+  "extends":
+  - ".kitchen_test_upgrade5"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_central_us"
+".kitchen_test_upgrade6":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh upgrade6-test $AGENT_MAJOR_VERSION"
+".kitchen_test_upgrade6_agent":
+  "extends":
+  - ".kitchen_test_upgrade6"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_south_central_us"
+".kitchen_test_upgrade7":
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh upgrade7-test $AGENT_MAJOR_VERSION"
+".kitchen_test_upgrade7_agent":
+  "extends":
+  - ".kitchen_test_upgrade7"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_north_central_us"
+".kitchen_test_upgrade7_iot_agent":
+  "extends":
+  - ".kitchen_test_upgrade7"
+  - ".kitchen_datadog_iot_agent_flavor"
+  - ".kitchen_azure_location_north_central_us"
+".kitchen_test_windows_installer":
+  "before_script":
+  - "if [ $AGENT_MAJOR_VERSION == \"7\" ]; then export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A7;\
+    \ else export WINDOWS_TESTING_S3_BUCKET=$WINDOWS_TESTING_S3_BUCKET_A6; fi"
+  - "rsync -azr --delete ./ $SRC_PATH"
+  - "export TEST_PLATFORMS=\"win2012,urn,MicrosoftWindowsServer:WindowsServer:2012-Datacenter:3.127.20190410\""
+  - "cd $DD_AGENT_TESTING_DIR"
+  - "bash -l tasks/kitchen_setup.sh"
+  "script":
+  - "bash -l tasks/run-test-kitchen.sh windows-install-test $AGENT_MAJOR_VERSION"
+".kitchen_test_windows_installer_agent":
+  "extends":
+  - ".kitchen_test_windows_installer"
+  - ".kitchen_datadog_agent_flavor"
+  - ".kitchen_azure_location_north_central_us"
+".quay_variables":
+  "DELEGATION_KEY_SSM_KEY": "docker_hub_signing_key"
+  "DELEGATION_PASS_SSM_KEY": "docker_hub_signing_pass"
+  "DOCKER_REGISTRY_LOGIN_SSM_KEY": "quay_login"
+  "DOCKER_REGISTRY_PWD_SSM_KEY": "quay_pwd"
+  "DOCKER_REGISTRY_URL": "quay.io"
+  "SRC_AGENT": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent"
+  "SRC_DCA": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/cluster-agent"
+  "SRC_DSD": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/dogstatsd"
+".retrieve_linux_go_deps": "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\n\
+  mkdir -p $GOPATH/pkg && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar\
+  \ xzf vendor.tar.gz -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+".run_tests_preparation":
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate $CONDA_ENV"
+  - "python3 -m pip install wheel"
+  - "python3 -m pip install -r requirements.txt"
+  - "GO111MODULE=off go get gopkg.in/yaml.v2"
+  - "GO111MODULE=off go get github.com/stretchr/testify"
+  - "inv -e rtloader.make --install-prefix=$SRC_PATH/dev --python-runtimes \"$PYTHON_RUNTIMES\""
+  - "inv -e rtloader.install"
+  - "inv -e rtloader.format --raise-if-changed"
+  - "inv -e rtloader.test"
+  "needs":
+  - "linux_x64_go_deps"
+".system-probe_build_common":
+  "before_script":
+  - "mkdir -p $GOPATH/src/github.com/DataDog"
+  - "[[ \"$ARCH\" == arm64 ]] && cp -R $GOPATH/src/github.com/*/*/DataDog/datadog-agent\
+    \ $GOPATH/src/github.com/DataDog"
+  - "cd $SRC_PATH"
+  - "inv -e deps --verbose"
+  - "$S3_CP_CMD $S3_ARTIFACTS_URI/libbcc-$ARCH.tar.xz /tmp/libbcc.tar.xz"
+  - "mkdir -p /opt/datadog-agent/embedded"
+  - "tar -xvf /tmp/libbcc.tar.xz -C /opt/datadog-agent/embedded"
+  "script":
+  - "CGO_CFLAGS='-I/opt/datadog-agent/embedded/include' CGO_LDFLAGS='-Wl,-rpath,/opt/datadog-agent/embedded/lib\
+    \ -L/opt/datadog-agent/embedded/lib' inv -e system-probe.build --go-version=$SYSTEM_PROBE_GO_VERSION"
+  - "CGO_CFLAGS='-I/opt/datadog-agent/embedded/include' CGO_LDFLAGS='-Wl,-rpath,/opt/datadog-agent/embedded/lib\
+    \ -L/opt/datadog-agent/embedded/lib' inv -e system-probe.test --only-check-bpf-bytes"
+  - "$S3_CP_CMD $SRC_PATH/$SYSTEM_PROBE_BINARIES_DIR/system-probe $S3_ARTIFACTS_URI/system-probe.$ARCH"
+".windows_main_agent_base":
+  "extends": ".windows_msi_base"
+  "variables":
+    "OMNIBUS_TARGET": "main"
+".windows_msi_base":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - ".omnibus/pkg"
+  "needs": []
+  "script":
+  - "if (Test-Path .omnibus) { remove-item -recurse -force .omnibus }"
+  - "if (Test-Path build-out) { remove-item -recurse -force build-out }"
+  - "mkdir .omnibus\\pkg"
+  - "docker run --rm -m 4096M -v \"$(Get-Location):c:\\mnt\" -e CI_JOB_ID=${CI_JOB_ID}\
+    \ -e OMNIBUS_TARGET=${OMNIBUS_TARGET} -e WINDOWS_BUILDER=true -e RELEASE_VERSION=\"\
+    $RELEASE_VERSION\" -e MAJOR_VERSION=\"$AGENT_MAJOR_VERSION\" -e PY_RUNTIMES=\"\
+    $PYTHON_RUNTIMES\" -e AWS_NETWORKING=true -e SIGN_WINDOWS=true -e TARGET_ARCH=\"\
+    $ARCH\" 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/windows_1809_${ARCH}:${Env:DATADOG_AGENT_WINBUILDIMAGES}\
+    \ c:\\mnt\\tasks\\winbuildscripts\\buildwin.bat"
+  - "copy build-out\\${CI_JOB_ID}\\*.msi .omnibus\\pkg"
+  - "if (Test-Path build-out\\${CI_JOB_ID}\\*.zip) { copy build-out\\${CI_JOB_ID}\\\
+    *.zip .omnibus\\pkg }"
+  - "remove-item -recurse -force build-out\\${CI_JOB_ID}"
+  - "get-childitem build-out"
+  - "get-childitem .omnibus\\pkg"
+  "stage": "package_build"
+  "tags":
+  - "runner:windows-docker"
+  - "windowsversion:1809"
+"agent_android_apk":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "before_script":
+  - "echo running android before_script"
+  - "cd $SRC_PATH"
+  - "python3 -m pip install -r requirements.txt"
+  - "inv -e deps --android"
+  - "echo \"24333f8a63b6825ea9c5514f83c2829b004d1fee\" > \"$ANDROID_HOME/licenses/android-sdk-license\""
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/android_builder:$DATADOG_AGENT_BUILDERS"
+  "script":
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "inv -e android.build --major-version 7"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR"
+  - "cp ./bin/agent/ddagent-*-unsigned.apk $OMNIBUS_PACKAGE_DIR"
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+"agent_deb-arm64-a6":
+  "artifacts": *id003
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "build_system-probe-arm64"
+  - "linux_arm64_go_deps"
+  "script": *id004
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "DESTINATION_DBG_DEB": "datadog-agent-dbg_6_arm64.deb"
+    "DESTINATION_DEB": "datadog-agent_6_arm64.deb"
+    "PACKAGE_ARCH": "arm64"
+    "PYTHON_RUNTIMES": "2,3"
+"agent_deb-arm64-a7":
+  "artifacts": *id003
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "build_system-probe-arm64"
+  - "linux_arm64_go_deps"
+  "script": *id004
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "DESTINATION_DBG_DEB": "datadog-agent-dbg_7_arm64.deb"
+    "DESTINATION_DEB": "datadog-agent_7_arm64.deb"
+    "PACKAGE_ARCH": "arm64"
+    "PYTHON_RUNTIMES": "3"
+"agent_deb-x64-a6":
+  "artifacts": *id003
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate $CONDA_ENV"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id004
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "CONDA_ENV": "ddpy3"
+    "DESTINATION_DBG_DEB": "datadog-agent-dbg_6_amd64.deb"
+    "DESTINATION_DEB": "datadog-agent_6_amd64.deb"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "2,3"
+"agent_deb-x64-a7":
+  "artifacts": *id003
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate $CONDA_ENV"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id004
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "CONDA_ENV": "ddpy3"
+    "DESTINATION_DBG_DEB": "datadog-agent-dbg_7_amd64.deb"
+    "DESTINATION_DEB": "datadog-agent_7_amd64.deb"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "3"
+"agent_rpm-arm64-a6":
+  "artifacts": *id005
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "build_system-probe-arm64"
+  - "linux_arm64_go_deps"
+  "script": *id006
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "PACKAGE_ARCH": "arm64"
+    "PYTHON_RUNTIMES": "2,3"
+"agent_rpm-arm64-a7":
+  "artifacts": *id005
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "build_system-probe-arm64"
+  - "linux_arm64_go_deps"
+  "script": *id006
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "PACKAGE_ARCH": "arm64"
+    "PYTHON_RUNTIMES": "3"
+"agent_rpm-x64-a6":
+  "artifacts": *id005
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate $CONDA_ENV"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id006
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "CONDA_ENV": "ddpy3"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "2,3"
+"agent_rpm-x64-a7":
+  "artifacts": *id005
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate $CONDA_ENV"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id006
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "CONDA_ENV": "ddpy3"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "3"
+"agent_suse-x64-a6":
+  "artifacts": *id007
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/suse_x64:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id008
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "2,3"
+"agent_suse-x64-a7":
+  "artifacts": *id007
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "export RELEASE_VERSION=$RELEASE_VERSION_7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/suse_x64:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "build_system-probe-x64"
+  - "linux_x64_go_deps"
+  "script": *id008
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+    "PACKAGE_ARCH": "amd64"
+    "PYTHON_RUNTIMES": "3"
+"build_libbcc_arm64":
+  "extends": ".build_libbcc_common"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/system-probe_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "ARCH": "arm64"
+"build_libbcc_x64":
+  "extends": ".build_libbcc_common"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/system-probe_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "ARCH": "amd64"
+"build_system-probe-arm64":
+  "extends": ".system-probe_build_common"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/system-probe_arm64:$DATADOG_AGENT_SYSPROBE_BUILDIMAGES"
+  "needs":
+  - "build_libbcc_arm64"
+  "stage": "binary_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "ARCH": "arm64"
+"build_system-probe-x64":
+  "extends": ".system-probe_build_common"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/system-probe_x64:$DATADOG_AGENT_SYSPROBE_BUILDIMAGES"
+  "needs":
+  - "build_libbcc_x64"
+  "stage": "binary_build"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "ARCH": "amd64"
+"default":
+  "retry":
+    "max": !!int "2"
+    "when":
+    - "runner_system_failure"
+    - "stuck_or_timeout_failure"
+    - "unknown_failure"
+    - "api_failure"
+"deploy_deb_testing-a6":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_deb-x64-a6"
+  "script":
+  - "set +x"
+  - "APT_SIGNING_KEY_ID=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.apt_signing_key_id\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "APT_SIGNING_PRIVATE_KEY_PART1=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_private_key_part1 --with-decryption --query \"\
+    Parameter.Value\" --out text)"
+  - "APT_SIGNING_PRIVATE_KEY_PART2=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_private_key_part2 --with-decryption --query \"\
+    Parameter.Value\" --out text)"
+  - "APT_SIGNING_KEY_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_key_passphrase --with-decryption --query \"Parameter.Value\"\
+    \ --out text)"
+  - "echo \"$APT_SIGNING_KEY_ID\""
+  - "printf -- \"$APT_SIGNING_PRIVATE_KEY_PART1\\n$APT_SIGNING_PRIVATE_KEY_PART2\\\
+    n\" | gpg --import --batch"
+  - "echo \"$APT_SIGNING_KEY_PASSPHRASE\" | deb-s3 upload -c \"pipeline-$DD_PIPELINE_ID\"\
+    \ -m 6 -b $DEB_TESTING_S3_BUCKET -a amd64 --sign=$APT_SIGNING_KEY_ID --gpg_options=\"\
+    --passphrase-fd 0 --batch --digest-algo SHA512\" --preserve_versions --visibility\
+    \ public $OMNIBUS_PACKAGE_DIR/datadog-*_6*amd64.deb"
+  - "echo \"$APT_SIGNING_KEY_PASSPHRASE\" | deb-s3 upload -c \"pipeline-$DD_PIPELINE_ID\"\
+    \ -m 6 -b $DEB_TESTING_S3_BUCKET -a x86_64 --sign=$APT_SIGNING_KEY_ID --gpg_options=\"\
+    --passphrase-fd 0 --batch --digest-algo SHA512\" --preserve_versions --visibility\
+    \ public $OMNIBUS_PACKAGE_DIR/datadog-*_6*amd64.deb"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+"deploy_deb_testing-a7":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_deb-x64-a7"
+  - "iot_agent_deb-x64"
+  - "dogstatsd_deb-x64"
+  "script":
+  - "set +x"
+  - "APT_SIGNING_KEY_ID=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.apt_signing_key_id\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "APT_SIGNING_PRIVATE_KEY_PART1=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_private_key_part1 --with-decryption --query \"\
+    Parameter.Value\" --out text)"
+  - "APT_SIGNING_PRIVATE_KEY_PART2=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_private_key_part2 --with-decryption --query \"\
+    Parameter.Value\" --out text)"
+  - "APT_SIGNING_KEY_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.apt_signing_key_passphrase --with-decryption --query \"Parameter.Value\"\
+    \ --out text)"
+  - "echo \"$APT_SIGNING_KEY_ID\""
+  - "printf -- \"$APT_SIGNING_PRIVATE_KEY_PART1\\n$APT_SIGNING_PRIVATE_KEY_PART2\\\
+    n\" | gpg --import --batch"
+  - "echo \"$APT_SIGNING_KEY_PASSPHRASE\" | deb-s3 upload -c \"pipeline-$DD_PIPELINE_ID\"\
+    \ -m 7 -b $DEB_TESTING_S3_BUCKET -a amd64 --sign=$APT_SIGNING_KEY_ID --gpg_options=\"\
+    --passphrase-fd 0 --batch --digest-algo SHA512\" --preserve_versions --visibility\
+    \ public $OMNIBUS_PACKAGE_DIR/datadog-*_7*amd64.deb"
+  - "echo \"$APT_SIGNING_KEY_PASSPHRASE\" | deb-s3 upload -c \"pipeline-$DD_PIPELINE_ID\"\
+    \ -m 7 -b $DEB_TESTING_S3_BUCKET -a x86_64 --sign=$APT_SIGNING_KEY_ID --gpg_options=\"\
+    --passphrase-fd 0 --batch --digest-algo SHA512\" --preserve_versions --visibility\
+    \ public $OMNIBUS_PACKAGE_DIR/datadog-*_7*amd64.deb"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+"deploy_rpm_testing-a6":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_rpm-x64-a6"
+  "script":
+  - "rpm-s3 --verbose --visibility public-read -c \"https://s3.amazonaws.com\" -b\
+    \ $RPM_TESTING_S3_BUCKET -p \"testing/pipeline-$DD_PIPELINE_ID/6/x86_64/\" $OMNIBUS_PACKAGE_DIR/datadog-*-6.*x86_64.rpm"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+"deploy_rpm_testing-a7":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_rpm-x64-a7"
+  - "iot_agent_rpm-x64"
+  - "dogstatsd_rpm-x64"
+  "script":
+  - "rpm-s3 --verbose --visibility public-read -c \"https://s3.amazonaws.com\" -b\
+    \ $RPM_TESTING_S3_BUCKET -p \"testing/pipeline-$DD_PIPELINE_ID/7/x86_64/\" $OMNIBUS_PACKAGE_DIR/datadog-*-7.*x86_64.rpm"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+"deploy_suse_rpm_testing-a6":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR_SUSE"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_suse-x64-a6"
+  "script":
+  - "rpm-s3 --verbose --visibility public-read -c \"https://s3.amazonaws.com\" -b\
+    \ $RPM_TESTING_S3_BUCKET -p \"suse/testing/pipeline-$DD_PIPELINE_ID/6/x86_64/\"\
+    \ $OMNIBUS_PACKAGE_DIR_SUSE/datadog-*-6.*x86_64.rpm"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+"deploy_suse_rpm_testing-a7":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR_SUSE"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "agent_suse-x64-a7"
+  - "iot_agent_suse-x64"
+  - "dogstatsd_suse-x64"
+  "script":
+  - "rpm-s3 --verbose --visibility public-read -c \"https://s3.amazonaws.com\" -b\
+    \ $RPM_TESTING_S3_BUCKET -p \"suse/testing/pipeline-$DD_PIPELINE_ID/7/x86_64/\"\
+    \ $OMNIBUS_PACKAGE_DIR_SUSE/datadog-*-7.*x86_64.rpm"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+"deploy_windows_testing-a6":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "windows_msi_x64-a6"
+  "script":
+  - "$S3_CP_CMD --recursive --exclude \"*\" --include \"datadog-agent-6.*.msi\" $OMNIBUS_PACKAGE_DIR\
+    \ s3://$WIN_S3_BUCKET/$WINDOWS_TESTING_S3_BUCKET_A6 --grants read=uri=http://acs.amazonaws.com/groups/global/AllUsers\
+    \ full=id=3a6e02b08553fd157ae3fb918945dd1eaae5a1aa818940381ef07a430cf25732"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+"deploy_windows_testing-a7":
+  "before_script":
+  - "ls $OMNIBUS_PACKAGE_DIR"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "windows_msi_x64-a7"
+  "script":
+  - "$S3_CP_CMD --recursive --exclude \"*\" --include \"datadog-agent-7.*.msi\" $OMNIBUS_PACKAGE_DIR\
+    \ s3://$WIN_S3_BUCKET/$WINDOWS_TESTING_S3_BUCKET_A7 --grants read=uri=http://acs.amazonaws.com/groups/global/AllUsers\
+    \ full=id=3a6e02b08553fd157ae3fb918945dd1eaae5a1aa818940381ef07a430cf25732"
+  "stage": "testkitchen_deploy"
+  "tags":
+  - "runner:main"
+  - "size:large"
+"dogstatsd_deb-x64":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate ddpy3"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "linux_x64_go_deps"
+  "script":
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "inv -e dogstatsd.omnibus-build --release-version \"$RELEASE_VERSION_7\" --major-version\
+    \ 7 --base-dir $OMNIBUS_BASE_DIR ${USE_S3_CACHING} --skip-deps"
+  - "find $OMNIBUS_BASE_DIR/pkg -name \"datadog-dogstatsd*_amd64.deb\" -exec dpkg\
+    \ -c {} \\;"
+  - "$S3_CP_CMD $OMNIBUS_BASE_DIR/pkg/datadog-dogstatsd*_amd64.deb $S3_ARTIFACTS_URI/datadog-dogstatsd_amd64.deb"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/datadog-dogstatsd*_amd64.deb{,.metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+"dogstatsd_rpm-x64":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR"
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  - "source /root/.bashrc && conda activate ddpy3"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "linux_x64_go_deps"
+  "script":
+  - "rm -rf $OMNIBUS_PACKAGE_DIR/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase --with-decryption --query \"Parameter.Value\"\
+    \ --out text)"
+  - "set -x"
+  - "inv -e dogstatsd.omnibus-build --release-version \"$RELEASE_VERSION_7\" --major-version\
+    \ 7 --base-dir $OMNIBUS_BASE_DIR ${USE_S3_CACHING} --skip-deps"
+  - "find $OMNIBUS_BASE_DIR/pkg -type f -name '*.rpm' -print0 | sort -z | xargs -0\
+    \ -I '{}' rpm -i '{}'"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR && cp $OMNIBUS_BASE_DIR/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR"
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+"dogstatsd_suse-x64":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR_SUSE"
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/suse_x64:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "linux_x64_go_deps"
+  "script":
+  - "rm -rf $OMNIBUS_PACKAGE_DIR_SUSE/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase --with-decryption --query \"Parameter.Value\"\
+    \ --out text)"
+  - "set -x"
+  - "inv -e dogstatsd.omnibus-build --release-version \"$RELEASE_VERSION_7\" --major-version\
+    \ 7 --base-dir $OMNIBUS_BASE_DIR_SUSE ${USE_S3_CACHING} --skip-deps"
+  - "find $OMNIBUS_BASE_DIR_SUSE/pkg -type f -name '*.rpm' -print0 | sort -z | xargs\
+    \ -0 -I '{}' rpm -i '{}'"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR_SUSE && cp $OMNIBUS_BASE_DIR_SUSE/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR_SUSE"
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:large"
+  "variables":
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials"
+"include": "https://gitlab-templates.ddbuild.io/slack-notifier/v1/template.yml"
+"iot_agent_deb-arm64":
+  "artifacts": *id009
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "linux_arm64_go_deps"
+  "script": *id010
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "DESTINATION_DEB": "datadog-iot-agent_7_arm64.deb"
+    "PACKAGE_ARCH": "arm64"
+"iot_agent_deb-armhf":
+  "artifacts": *id009
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_armhf:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "linux_armhf_go_deps"
+  "script": *id010
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+  "variables":
+    "DESTINATION_DEB": "datadog-iot-agent_7_armhf.deb"
+    "PACKAGE_ARCH": "armhf"
+"iot_agent_deb-x64":
+  "artifacts": *id009
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "linux_x64_go_deps"
+  "script": *id010
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+  "variables":
+    "DESTINATION_DEB": "datadog-iot-agent_7_amd64.deb"
+    "PACKAGE_ARCH": "amd64"
+"iot_agent_rpm-arm64":
+  "artifacts": *id011
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "linux_arm64_go_deps"
+  "script": *id012
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+"iot_agent_rpm-armhf":
+  "artifacts": *id011
+  "before_script":
+  - "export LD_PRELOAD=\"/usr/local/lib/libfakearmv7l.so\""
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_armhf:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "needs":
+  - "linux_armhf_go_deps"
+  "script": *id012
+  "stage": "package_build"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+"iot_agent_rpm-x64":
+  "artifacts": *id011
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/rpm_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "needs":
+  - "linux_x64_go_deps"
+  "script": *id012
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+"iot_agent_suse-x64":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - "$OMNIBUS_PACKAGE_DIR_SUSE"
+  "before_script":
+  - "mkdir -p $GOPATH/bin && tar xzf go-bin.tar.gz -C $GOPATH/bin\nmkdir -p $GOPATH/pkg\
+    \ && tar xzf go-pkg.tar.gz -C $GOPATH/pkg\nmkdir vendor && tar xzf vendor.tar.gz\
+    \ -C vendor\nrm -f go-bin.tar.gz go-pkg.tar.gz vendor.tar.gz\n"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/suse_x64:$DATADOG_AGENT_BUILDERS"
+  "needs":
+  - "linux_x64_go_deps"
+  "script":
+  - "echo \"About to build iot agent for $RELEASE_VERSION_7\""
+  - "echo \"Detected host architecture $(uname -m)\""
+  - "echo \"Target architecture ${DD_TARGET_ARCH:=amd64}\""
+  - "rm -rf $OMNIBUS_PACKAGE_DIR_SUSE/*"
+  - "set +x"
+  - "RPM_GPG_KEY=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.rpm_signing_private_key_e09422b3\
+    \ --with-decryption --query \"Parameter.Value\" --out text)"
+  - "printf -- \"$RPM_GPG_KEY\" | gpg --import --batch"
+  - "export RPM_SIGNING_PASSPHRASE=$(aws ssm get-parameter --region us-east-1 --name\
+    \ ci.datadog-agent.rpm_signing_key_passphrase_e09422b3 --with-decryption --query\
+    \ \"Parameter.Value\" --out text)"
+  - "set -x"
+  - "inv -e agent.omnibus-build --iot --log-level debug --release-version \"$RELEASE_VERSION_7\"\
+    \ --major-version 7 --base-dir $OMNIBUS_BASE_DIR --skip-deps"
+  - "ls $OMNIBUS_BASE_DIR/pkg/"
+  - "mkdir -p $OMNIBUS_PACKAGE_DIR_SUSE && cp $OMNIBUS_BASE_DIR/pkg/*.{rpm,metadata.json}\
+    \ $OMNIBUS_PACKAGE_DIR_SUSE"
+  "stage": "package_build"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+"kitchen_centos_install_script_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a6"
+  - ".kitchen_test_install_script_agent"
+"kitchen_centos_install_script_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_install_script_agent"
+"kitchen_centos_install_script_dogstatsd-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_install_script_dogstatsd"
+"kitchen_centos_install_script_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_install_script_iot_agent"
+"kitchen_centos_step_by_step_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a6"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_centos_step_by_step_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_centos_upgrade5_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a6"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_centos_upgrade5_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_centos_upgrade6_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a6"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_centos_upgrade6_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_centos_upgrade7_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_upgrade7_agent"
+"kitchen_centos_upgrade7_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_centos_a7"
+  - ".kitchen_test_upgrade7_iot_agent"
+"kitchen_debian_install_script_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a6"
+  - ".kitchen_test_install_script_agent"
+"kitchen_debian_install_script_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_install_script_agent"
+"kitchen_debian_install_script_dogstatsd-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_install_script_dogstatsd"
+"kitchen_debian_install_script_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_install_script_iot_agent"
+"kitchen_debian_step_by_step_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a6"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_debian_step_by_step_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_debian_upgrade5_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a6"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_debian_upgrade5_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_debian_upgrade6_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a6"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_debian_upgrade6_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_debian_upgrade7_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_upgrade7_agent"
+"kitchen_debian_upgrade7_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_debian_a7"
+  - ".kitchen_test_upgrade7_iot_agent"
+"kitchen_suse_install_script_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a6"
+  - ".kitchen_test_install_script_agent"
+"kitchen_suse_install_script_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_install_script_agent"
+"kitchen_suse_install_script_dogstatsd-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_install_script_dogstatsd"
+"kitchen_suse_install_script_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_install_script_iot_agent"
+"kitchen_suse_step_by_step_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a6"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_suse_step_by_step_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_suse_upgrade5_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a6"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_suse_upgrade5_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_suse_upgrade6_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a6"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_suse_upgrade6_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_suse_upgrade7_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_upgrade7_agent"
+"kitchen_suse_upgrade7_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_suse_a7"
+  - ".kitchen_test_upgrade7_iot_agent"
+"kitchen_ubuntu_install_script_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a6"
+  - ".kitchen_test_install_script_agent"
+"kitchen_ubuntu_install_script_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_install_script_agent"
+"kitchen_ubuntu_install_script_dogstatsd-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_install_script_dogstatsd"
+"kitchen_ubuntu_install_script_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_install_script_iot_agent"
+"kitchen_ubuntu_step_by_step_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a6"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_ubuntu_step_by_step_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_step_by_step_agent"
+"kitchen_ubuntu_upgrade5_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a6"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_ubuntu_upgrade5_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_ubuntu_upgrade6_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a6"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_ubuntu_upgrade6_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_ubuntu_upgrade7_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_upgrade7_agent"
+"kitchen_ubuntu_upgrade7_iot_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_ubuntu_a7"
+  - ".kitchen_test_upgrade7_iot_agent"
+"kitchen_windows_chef_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a6"
+  - ".kitchen_test_chef_agent"
+"kitchen_windows_chef_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a7"
+  - ".kitchen_test_chef_agent"
+"kitchen_windows_installer_agent-a6":
+  "allow_failure": !!bool "true"
+  "extends":
+  - ".kitchen_scenario_windows_a6"
+  - ".kitchen_test_windows_installer_agent"
+  "retry": !!int "0"
+"kitchen_windows_installer_agent-a7":
+  "allow_failure": !!bool "true"
+  "extends":
+  - ".kitchen_scenario_windows_a7"
+  - ".kitchen_test_windows_installer_agent"
+  "retry": !!int "0"
+"kitchen_windows_upgrade5_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a6"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_windows_upgrade5_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a7"
+  - ".kitchen_test_upgrade5_agent"
+"kitchen_windows_upgrade6_agent-a6":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a6"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_windows_upgrade6_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a7"
+  - ".kitchen_test_upgrade6_agent"
+"kitchen_windows_upgrade7_agent-a7":
+  "allow_failure": !!bool "false"
+  "extends":
+  - ".kitchen_scenario_windows_a7"
+  - ".kitchen_test_upgrade7_agent"
+"linux_arm64_go_deps":
+  "extends": ".go_deps"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_arm64:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+"linux_armhf_go_deps":
+  "extends": ".go_deps"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_armhf:$DATADOG_AGENT_ARMBUILDIMAGES"
+  "tags":
+  - "runner:docker-arm"
+  - "platform:arm64"
+"linux_x64_go_deps":
+  "extends": ".go_deps"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES"
+  "tags":
+  - "runner:main"
+  - "size:2xlarge"
+"stages":
+- "deps_build"
+- "deps_fetch"
+- "binary_build"
+- "package_build"
+- "testkitchen_deploy"
+- "testkitchen_testing"
+- "testkitchen_cleanup"
+"testkitchen_cleanup_azure-a6":
+  "allow_failure": !!bool "true"
+  "before_script": *id013
+  "dependencies": *id014
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "script": *id015
+  "stage": "testkitchen_cleanup"
+  "tags": *id016
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+"testkitchen_cleanup_azure-a7":
+  "allow_failure": !!bool "true"
+  "before_script": *id013
+  "dependencies": *id014
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/dd-agent-testing:$DATADOG_AGENT_BUILDERS"
+  "script": *id015
+  "stage": "testkitchen_cleanup"
+  "tags": *id016
+  "variables":
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+"testkitchen_cleanup_s3-a6":
+  "allow_failure": !!bool "true"
+  "dependencies":
+  - "agent_deb-x64-a6"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "script": *id017
+  "stage": "testkitchen_cleanup"
+  "tags": *id018
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a6"
+"testkitchen_cleanup_s3-a7":
+  "allow_failure": !!bool "true"
+  "dependencies":
+  - "agent_deb-x64-a7"
+  "image": "486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/gitlab_agent_deploy:$DATADOG_AGENT_BUILDERS"
+  "script": *id017
+  "stage": "testkitchen_cleanup"
+  "tags": *id018
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "DD_PIPELINE_ID": "$CI_PIPELINE_ID-a7"
+"variables":
+  "AGENT_BINARIES_DIR": "bin/agent"
+  "ANDROID_BUILDS_S3_BUCKET": "$ANDROID_S3_BUCKET/builds"
+  "ANDROID_S3_BUCKET": "dd-agent-androidtesting"
+  "BCC_VERSION": "v0.12.0"
+  "CLUSTER_AGENT_BINARIES_DIR": "bin/datadog-cluster-agent"
+  "CLUSTER_AGENT_CLOUDFOUNDRY_BINARIES_DIR": "bin/datadog-cluster-agent-cloudfoundry"
+  "DATADOG_AGENT_ARMBUILDIMAGES": "v2653795-e59e3fd"
+  "DATADOG_AGENT_BUILDERS": "v2752318-c3e56c1"
+  "DATADOG_AGENT_BUILDIMAGES": "v2653795-e59e3fd"
+  "DATADOG_AGENT_SYSPROBE_BUILDIMAGES": "v2653795-e59e3fd"
+  "DATADOG_AGENT_WINBUILDERS": "v2348149-ba6640d"
+  "DATADOG_AGENT_WINBUILDIMAGES": "v2724986-3bcb1ae"
+  "DD_AGENT_TESTING_DIR": "$CI_PROJECT_DIR/test/kitchen"
+  "DD_REPO_BRANCH_NAME": "$CI_COMMIT_REF_NAME"
+  "DEB_RPM_BUCKET_BRANCH": "nightly"
+  "DEB_RPM_TESTING_BUCKET_BRANCH": "testing"
+  "DEB_S3_BUCKET": "apt.datad0g.com"
+  "DEB_TESTING_S3_BUCKET": "apttesting.datad0g.com"
+  "DOGSTATSD_BINARIES_DIR": "bin/dogstatsd"
+  "OMNIBUS_BASE_DIR": "/.omnibus"
+  "OMNIBUS_BASE_DIR_SUSE": "/.omnibus/suse"
+  "OMNIBUS_BASE_DIR_WIN": "c:\\omni-base\\$CI_RUNNER_ID"
+  "OMNIBUS_BASE_DIR_WIN_OMNIBUS": "c:/omni-base/$CI_RUNNER_ID"
+  "OMNIBUS_PACKAGE_DIR": "$CI_PROJECT_DIR/.omnibus/pkg/"
+  "OMNIBUS_PACKAGE_DIR_SUSE": "$CI_PROJECT_DIR/.omnibus/suse/pkg"
+  "PROCESS_S3_BUCKET": "datad0g-process-agent"
+  "RELEASE_VERSION_6": "nightly"
+  "RELEASE_VERSION_7": "nightly-a7"
+  "RPM_S3_BUCKET": "yum.datad0g.com"
+  "RPM_TESTING_S3_BUCKET": "yumtesting.datad0g.com"
+  "S3_ARTIFACTS_URI": "s3://dd-ci-artefacts-build-stable/$CI_PROJECT_NAME/$CI_PIPELINE_ID"
+  "S3_CP_CMD": "aws s3 cp $S3_CP_OPTIONS"
+  "S3_CP_OPTIONS": "--only-show-errors --region us-east-1 --sse AES256"
+  "S3_DSD6_URI": "s3://dsd6-staging"
+  "S3_OMNIBUS_CACHE_BUCKET": "dd-ci-datadog-agent-omnibus-cache-build-stable"
+  "SRC_PATH": "/go/src/github.com/DataDog/datadog-agent"
+  "STATIC_BINARIES_DIR": "bin/static"
+  "SYSTEM_PROBE_BINARIES_DIR": "bin/system-probe"
+  "SYSTEM_PROBE_GO_VERSION": "1.13.11"
+  "USE_S3_CACHING": "--omnibus-s3-cache"
+  "WINDOWS_BUILDS_S3_BUCKET": "$WIN_S3_BUCKET/builds"
+  "WINDOWS_TESTING_S3_BUCKET_A6": "pipelines/A6/$CI_PIPELINE_ID"
+  "WINDOWS_TESTING_S3_BUCKET_A7": "pipelines/A7/$CI_PIPELINE_ID"
+  "WIN_S3_BUCKET": "dd-agent-mstesting"
+"windows_dsd_msi_x64-a7":
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_7"
+  "extends": ".windows_msi_base"
+  "variables":
+    "AGENT_MAJOR_VERSION": "7"
+    "ARCH": "x64"
+    "OMNIBUS_TARGET": "dogstatsd"
+    "PYTHON_RUNTIMES": ""
+"windows_msi_x64-a6":
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_6"
+  "extends": ".windows_main_agent_base"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "ARCH": "x64"
+    "PYTHON_RUNTIMES": "2,3"
+"windows_msi_x64-a7":
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_7"
+  "extends": ".windows_main_agent_base"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "ARCH": "x64"
+    "PYTHON_RUNTIMES": "3"
+"windows_msi_x86-a6":
+  "allow_failure": !!bool "true"
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_6"
+  "extends": ".windows_main_agent_base"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "6"
+    "ARCH": "x86"
+    "PYTHON_RUNTIMES": "2,3"
+"windows_msi_x86-a7":
+  "allow_failure": !!bool "true"
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_7"
+  "extends": ".windows_main_agent_base"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "ARCH": "x86"
+    "PYTHON_RUNTIMES": "3"
+"windows_zip_agent_binaries_x64-a7":
+  "artifacts":
+    "expire_in": "2 weeks"
+    "paths":
+    - ".omnibus/pkg"
+  "before_script":
+  - "set RELEASE_VERSION $RELEASE_VERSION_7"
+  "needs": []
+  "script":
+  - "if (Test-Path .omnibus) { remove-item -recurse -force .omnibus }"
+  - "if (Test-Path build-out) { remove-item -recurse -force build-out }"
+  - "mkdir .omnibus\\pkg"
+  - "docker run --rm -m 4096M -v \"$(Get-Location):c:\\mnt\" -e OMNIBUS_TARGET=${OMNIBUS_TARGET}\
+    \ -e WINDOWS_BUILDER=true -e RELEASE_VERSION=\"$RELEASE_VERSION\" -e MAJOR_VERSION=\"\
+    $AGENT_MAJOR_VERSION\" -e PY_RUNTIMES=\"$PYTHON_RUNTIMES\" -e AWS_NETWORKING=true\
+    \ -e SIGN_WINDOWS=true 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/windows_1809_${ARCH}:${Env:DATADOG_AGENT_WINBUILDIMAGES}\
+    \ c:\\mnt\\tasks\\winbuildscripts\\buildwin.bat"
+  - "copy build-out\\*.zip .omnibus\\pkg"
+  "stage": "package_build"
+  "tags":
+  - "runner:windows-docker"
+  - "windowsversion:1809"
+  "variables":
+    "AGENT_MAJOR_VERSION": !!int "7"
+    "ARCH": "x64"
+    "OMNIBUS_TARGET": "agent_binaries"
