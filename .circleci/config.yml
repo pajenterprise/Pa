@@ -1,0 +1,307 @@
+version: 2.1 # Use version 2.1 to enable Orb usage.
+
+# This file uses YAML anchors to deduplicate steps
+# see https://circleci.com/blog/circleci-hacks-reuse-yaml-in-your-circleci-config-with-yaml/
+# and https://learnxinyminutes.com/docs/yaml/
+
+experimental:
+  # For some reason filtering out notifications keeps being undocumented and
+  # marked as experimental but as of today, it's still working.
+  notify:
+    branches:
+      only:
+        - master
+
+# commands:
+#   save_dlc:
+#     description: "Export the Windows image from Docker and save in CircleCI cache"
+#     parameters:
+#       image:
+#         type: string
+#     steps:
+#       - run:
+#           name: Save Docker layer cache
+#           no_output_timeout: 60m
+#           command: |
+#             if ( ! (Test-Path "/home/circleci/docker-caches")) {
+#                 mkdir -p /home/circleci/docker-caches
+#             }
+#             if ( ! (Test-Path "/home/circleci/docker-caches/datadog-windows-builder.tar.gz")) {
+#                 docker save << parameters.image >> -o datadog-windows-builder.tar
+#                 7z a /home/circleci/docker-caches/datadog-windows-builder.tar.gz datadog-windows-builder.tar
+#             }
+#       - save_cache:
+#           key: docker-layers-<< parameters.image >>-1
+#           paths:
+#             - /home/circleci/docker-caches
+#   restore_dlc:
+#     description: "Restore Windows image saved in cache"
+#     parameters:
+#       image:
+#         type: string
+#     steps:
+#       - restore_cache:
+#           keys:
+#             - docker-layers-<< parameters.image >>-1
+#       - run:
+#           name: Load Docker layer cache
+#           no_output_timeout: 60m
+#           command: |
+#             if (Test-Path "/home/circleci/docker-caches/datadog-windows-builder.tar.gz") {
+#               docker load -i /home/circleci/docker-caches/datadog-windows-builder.tar.gz
+#               docker images
+#             }
+
+templates:
+  job_template: &job_template
+    docker:
+      - image: datadog/datadog-agent-runner-circle:go1138
+        environment:
+          USE_SYSTEM_LIBS: "1"
+    working_directory: /go/src/github.com/DataDog/datadog-agent
+
+  step_templates:
+    - restore_cache: &restore_deps
+        keys:
+          # The first match will be used. Doing that so new branches
+          # use master's cache but don't pollute it back.
+          #
+          # If incremental dep fails, increase the cache gen number
+          # in restore_deps AND save_deps
+          # See https://github.com/DataDog/datadog-agent/pull/2384
+          - gen15-godeps-{{ .Branch }}-{{ .Revision }}
+          - gen15-godeps-{{ .Branch }}-
+          - gen15-godeps-master-
+    - save_cache: &save_deps
+        key: gen15-godeps-{{ .Branch }}-{{ .Revision }}
+    - restore_cache: &restore_source
+        keys:
+          # Cache retrieval is faster than full git checkout
+          - v4-repo-{{ .Revision }}
+    - save_cache: &save_source
+        key: v4-repo-{{ .Revision }}
+
+jobs:
+  checkout_code:
+    docker:
+      - image: alpine/git:latest
+    working_directory: /go/src/github.com/DataDog/datadog-agent
+    steps:
+      - checkout
+      - save_cache:
+          <<: *save_source
+          paths:
+            - /go/src/github.com/DataDog/datadog-agent
+
+  dependencies:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: setup python deps
+          command: |
+            pip install wheel
+            pip install -r requirements.txt
+      - run:
+          name: grab go deps
+          command: |
+            inv deps --verbose --dep-vendor-only
+      - run:
+          name: build rtloader
+          command: |
+            inv rtloader.make --install-prefix=/go/src/github.com/DataDog/datadog-agent/dev
+            inv rtloader.install
+      - run:
+          name: lint rtloader
+          command: |
+            inv rtloader.format --raise-if-changed
+      - run:
+          name: test rtloader
+          command: |
+            # remove base check before running tests, go on if pip fails
+            pip uninstall datadog-checks-base -y || :
+            inv rtloader.test
+      - run:
+          name: pre-compile go deps
+          command: inv -e agent.build --exclude-rtloader --race --precompile-only
+      - save_cache:
+          <<: *save_deps
+          paths:
+            - /go/src/github.com/DataDog/datadog-agent/vendor
+            - /go/src/github.com/DataDog/datadog-agent/dev
+            - /go/pkg
+            - /go/bin
+            - /usr/local/lib/python2.7/dist-packages
+            - /usr/local/bin
+
+  unit_tests:
+    <<: *job_template
+    resource_class: large
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: run unit tests
+          command: inv -e test --python-runtimes 3 --coverage --race --profile --fail-on-fmt --cpus 3
+      - run:
+          name: upload code coverage results
+          # Never fail on coverage upload
+          command: bash <(curl -s https://codecov.io/bash) -f profile.cov -F linux || true
+
+  integration_tests:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - setup_remote_docker
+      - run:
+          name: run integration tests
+          command: inv -e integration-tests --race --remote-docker
+
+  release_note:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-releasenote
+          name: run PR check for release note
+
+  team_label:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-teamassignment
+          name: run PR check for team assignment labels
+
+  milestone:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          command: inv -e lint-milestone
+          name: run PR check for milestone assignment
+
+  filename_linting:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: run filename linting
+          command: inv -e lint-filenames
+
+  docker_tests:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - setup_remote_docker
+      - run:
+          name: run docker image tests
+          command: inv -e docker.test
+      - run:
+          name: run docker image integration tests
+          command: inv -e docker.integration-tests
+
+  build_binaries:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: build dogstatsd
+          command: inv -e dogstatsd.build --static
+      - run:
+          name: build agent
+          command: inv -e agent.build --exclude-rtloader
+
+  build_iot_agent:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: build iot agent
+          command: inv -e agent.build --iot
+      - run:
+          name: test iot agent
+          command: ./bin/agent/agent -c ./bin/agent/dist check cpu
+
+  documentation_generation:
+    <<: *job_template
+    steps:
+      - restore_cache: *restore_source
+      - restore_cache: *restore_deps
+      - run:
+          name: generate doxygen documentation
+          command: inv -e rtloader.generate-doc
+
+  windows_docker_tests:
+    machine:
+      image: 'windows-server-2019-vs2019:stable'
+      resource_class: windows.2xlarge
+      shell: powershell.exe -ExecutionPolicy Bypass
+    working_directory: C:\gopath\src\github.com\DataDog\datadog-agent
+    steps:
+      - checkout
+      # - restore_dlc:
+      #     image: datadog/agent-buildimages-windows_1809_x64:v2581728-ba39fda
+      # - run:
+      #     name: Check restored data
+      #     command: |
+      #       if (Test-Path "/home/circleci/docker-caches") {
+      #         Get-ChildItem -Path "/home/circleci/docker-caches"
+      #       }
+      - run: docker pull datadog/agent-buildimages-windows_1809_x64:v2581728-ba39fda
+      # - save_dlc:
+      #     image: datadog/agent-buildimages-windows_1809_x64:v2581728-ba39fda
+      - run: docker run --rm -m 8192M -v "$(Get-Location):c:\mnt" -e PY_RUNTIMES="3" -e NEW_BUILDER="true" -e CODECOV="true" datadog/agent-buildimages-windows_1809_x64:v2581728-ba39fda c:\mnt\tasks\winbuildscripts\unittests.bat
+
+workflows:
+  version: 2.1
+  test_and_build:
+    jobs:
+      - checkout_code
+      - windows_docker_tests
+      - dependencies:
+          requires:
+            - checkout_code
+      - unit_tests:
+          requires:
+            - dependencies
+      - integration_tests:
+          requires:
+            - dependencies
+      - release_note:
+          requires:
+            - dependencies
+      - team_label:
+          requires:
+            - dependencies
+      - milestone:
+          requires:
+            - dependencies
+      - filename_linting:
+          requires:
+            - dependencies
+      - docker_tests:
+          requires:
+            - dependencies
+      - documentation_generation:
+          requires:
+            - dependencies
+      - build_binaries:
+          requires:
+            - unit_tests
+            - integration_tests
+            - docker_tests
+      - build_iot_agent:
+          requires:
+            - unit_tests
+            - integration_tests
+            - docker_tests
