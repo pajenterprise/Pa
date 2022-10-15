@@ -1,0 +1,9 @@
+version: "3.5"
+
+services:
+  systemd2:
+    privileged: true
+    image: "centos/systemd:latest"
+    volumes:
+      - /tmp/var/run:/var/run
+      - /tmp/system.conf:/etc/systemd/system.conf
