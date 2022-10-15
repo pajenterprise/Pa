@@ -1,0 +1,110 @@
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  name: datadog-agent
+  namespace: default
+spec:
+  template:
+    metadata:
+      labels:
+        app: datadog-agent
+      name: datadog-agent
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/network-tracer: unconfined
+    spec:
+      serviceAccountName: datadog-agent
+      hostNetwork: true
+      containers:
+      - image: datadog/agent-dev:sunhay-packaging-and-running-network-tracer
+        imagePullPolicy: Always
+        name: datadog-agent
+        ports:
+          - containerPort: 8125
+            name: dogstatsdport
+            protocol: UDP
+          - containerPort: 8126
+            name: traceport
+            protocol: TCP
+        env:
+          - name: DD_DD_URL
+            value: https://app.datad0g.com
+          - name: DD_PROCESS_AGENT_URL
+            value: https://process.datad0g.com/api/v1/collector
+          - name: DD_API_KEY
+            value: APIKEY
+          - name: KUBERNETES
+            value: "true"
+          - name: DD_KUBERNETES_KUBELET_HOST
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+          - name: DD_PROCESS_AGENT_ENABLED
+            value: "true"
+          - name: DD_NETWORK_TRACING_ENABLED
+            value: "true"
+          # Signal that we're running the network-tracer in a separate container
+          - name: DD_NETWORK_TRACING_EXTERNAL
+            value: "true"
+          - name: DD_NETTRACER_SOCKET
+            value: "/host/var/run/nettracer.sock"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+          - name: dockersocket
+            mountPath: /var/run/docker.sock
+          - name: procdir
+            mountPath: /host/proc
+            readOnly: true
+          - name: cgroups
+            mountPath: /host/sys/fs/cgroup
+            readOnly: true
+          - name: var-run
+            mountPath: /host/var/run
+        livenessProbe:
+          exec:
+            command:
+            - ./probe.sh
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+      - name: network-tracer
+        image: datadog/agent-dev:sunhay-packaging-and-running-network-tracer
+        imagePullPolicy: Always
+        securityContext:
+          capabilities:
+            add: ["SYS_ADMIN", "SYS_RESOURCE"]
+        command:
+          - /opt/datadog-agent/embedded/bin/network-tracer
+        volumeMounts:
+          - {name: debugfs, mountPath: /sys/kernel/debug}
+          - {name: var-run, mountPath: /host/var/run}
+        env:
+          - name: DD_LOG_LEVEL
+            value: "debug"
+          - name: DD_LOGS_STDOUT
+            value: "true"
+          - name: DD_NETWORK_TRACING_ENABLED
+            value: "true"
+          - name: DD_NETTRACER_SOCKET
+            value: "/host/var/run/nettracer.sock"
+      volumes:
+        - hostPath:
+            path: /var/run/docker.sock
+          name: dockersocket
+        - hostPath:
+            path: /proc
+          name: procdir
+        - hostPath:
+            path: /sys/fs/cgroup
+          name: cgroups
+        - hostPath:
+            path: /sys/kernel/debug
+          name: debugfs
+        - hostPath:
+            path: /var/run
+          name: var-run
