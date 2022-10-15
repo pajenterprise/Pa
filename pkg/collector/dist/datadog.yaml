@@ -1,0 +1,152 @@
+# The host of the Datadog intake server to send Agent data to
+dd_url: https://app.datadoghq.com
+
+# The Datadog api key to associate your Agent's data with your organization.
+# Can be found here:
+# https://app.datadoghq.com/account/settings
+api_key:
+
+# If you need a proxy to connect to the Internet, provide it here (default:
+# disabled). You can use the 'no_proxy' list to specify hosts that should bypass the
+# proxy. These settings might impact your checks requests, please refer to the
+# specific check documentation for more details.
+#
+# proxy:
+#   http: http(s)://user:password@proxy_for_http:port
+#   https: http(s)://user:password@proxy_for_https:port
+#   no_proxy:
+#     - host1
+#     - host2
+
+# If you run the agent behind haproxy, you might want to set this to yes
+# skip_ssl_validation: no
+
+# Force the hostname to whatever you want. (default: auto-detected)
+# hostname: mymachine.mydomain
+
+# The path containing check configuration files
+# By default, uses the conf.d folder located in the agent configuration folder.
+# confd_path:
+
+# Additional path where to search for Python checks
+# By default, uses the checks.d folder located in the agent configuration folder.
+# additional_checksd:
+
+# The port for the go_expvar server
+# expvar_port: 5000
+
+# The path to the Unix Socket where the IPC api listens on *nix
+# cmd_sock: /tmp/agent.sock
+
+# The path of the Named Pipe the IPC api uses on Windows
+# cmd_pipe_name: \\.\pipe\ddagent
+
+# How many workers will be used to run the checks
+# check_runners: 4
+
+# Forwarder timeout in seconds
+# forwarder_timeout: 20
+
+# The forwarder retries failed requests. Use this setting to change the
+# maximum length of the forwarder's retry queue (each request in the queue
+# takes no more than 2MB in memory)
+# forwarder_retry_queue_max_size: 30
+
+# Metadata collection should always be enabled, except if you are running several
+# agents/dsd instances per host. In that case, only one agent should have it on.
+# WARNING: disabling it on every agent will lead to display and billing issues
+# enable_metadata_collection: true
+
+# Metadata collectors, add or remove from the list to enable or disable collection.
+# Intervals are expressed in seconds.
+metadata_collectors:
+  - name: 'resources'
+    interval: 60
+#  - name: k8s
+#    interval: 60
+
+# DogStatsd
+#
+# If you don't want to enable the DogStatsd server, set this option to no
+# use_dogstatsd: yes
+#
+# Make sure your client is sending to the same port
+# dogstatsd_port: 8125
+#
+# Whether dogstatsd should listen to a Unix Socket instead of UDP (*nix only).
+# Set to a valid filesystem path to enable
+# dogstatsd_socket:
+#
+# The buffer size use to receive statsd packet, in bytes
+# dogstatsd_buffer_size: 1024
+#
+# Whether dogstatsd should listen to non local traffic
+# dogstatsd_non_local_traffic: no
+#
+# Publish dogstatsd's internal stats as Go epxvars
+# dogstatsd_stats_enable: no
+#
+# How many items in the dogstatsd's stats circular buffer
+# dogstatsd_stats_buffer: 10
+
+# JMX
+#
+# jmx_pipe_path:
+# jmx_pipe_name: dd-auto_discovery
+
+# Autoconfig
+#
+# Directory containing configuration templates
+# autoconf_template_dir: /datadog/check_configs
+#
+# The providers the Agent should call to collect checks configurations.
+# Please note the File Configuration Provider is enabled by default and cannot
+# be configured.
+# config_providers:
+#   - name: etcd
+#     polling: true
+#     template_dir: /datadog/check_configs
+#     template_url: http://127.0.0.1
+#     username:
+#     password:
+
+#   - name: consul
+#     polling: true
+#     template_dir: /datadog/check_configs
+#     template_url: http://127.0.0.1
+#     ca_file:
+#     ca_path:
+#     cert_file:
+#     key_file:
+#     username:
+#     password:
+#     token:
+
+#   - name: zookeeper
+#     polling: true
+#     template_dir: /datadog/check_configs
+#     template_url: 127.0.0.1
+#     username:
+#     password:
+
+# Autodiscovery
+#
+# listeners:
+#   - name: docker
+
+# Logging
+#
+# log_level: info
+# log_file: /var/log/datadog/agent.log
+
+# Docker tag extraction
+#
+# We can extract container label or environment variables
+# as metric tags. If you prefix your tag name with +, it
+# will only be added to high cardinality metrics (docker check)
+#
+# docker_labels_as_tags:
+#   label_name:             tag_name
+#   high_cardinality_label: +tag_name
+# docker_env_as_tags:
+#   ENVVAR_NAME: tag_name
