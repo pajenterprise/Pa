@@ -1,0 +1,129 @@
+default:
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - unknown_failure
+      - api_failure
+
+variables:
+  # The SRC_PATH is in the GOPATH of the builders which
+  # currently is /go
+  SRC_PATH: /go/src/github.com/DataDog/datadog-agent
+  # Directory in which we execute the omnibus build.
+  # For an unknown reason, it does not go well with
+  # a ruby dependency if we build directly into $CI_PROJECT_DIR/.omnibus
+  OMNIBUS_BASE_DIR: /.omnibus
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR: $CI_PROJECT_DIR/.omnibus/pkg/
+  # Directory in which we execute the omnibus build for SUSE
+  # as we want to separate the RPM built for this distro.
+  OMNIBUS_BASE_DIR_SUSE: /.omnibus/suse
+  # Directory in which we put the artifacts after the build
+  # Must be in $CI_PROJECT_DIR
+  OMNIBUS_PACKAGE_DIR_SUSE: $CI_PROJECT_DIR/.omnibus/suse/pkg
+  OMNIBUS_BASE_DIR_WIN: c:\omni-base\$CI_RUNNER_ID
+  OMNIBUS_BASE_DIR_WIN_OMNIBUS: c:/omni-base/$CI_RUNNER_ID
+  DD_AGENT_TESTING_DIR: $CI_PROJECT_DIR/test/kitchen
+  STATIC_BINARIES_DIR: bin/static
+  DOGSTATSD_BINARIES_DIR: bin/dogstatsd
+  AGENT_BINARIES_DIR: bin/agent
+  CLUSTER_AGENT_BINARIES_DIR: bin/datadog-cluster-agent
+  CLUSTER_AGENT_CLOUDFOUNDRY_BINARIES_DIR: bin/datadog-cluster-agent-cloudfoundry
+  SYSTEM_PROBE_BINARIES_DIR: bin/system-probe
+  DEB_S3_BUCKET: apt.datad0g.com
+  RPM_S3_BUCKET: yum.datad0g.com
+  WIN_S3_BUCKET: dd-agent-mstesting
+  PROCESS_S3_BUCKET: datad0g-process-agent
+  ANDROID_S3_BUCKET: dd-agent-androidtesting
+  DEB_RPM_BUCKET_BRANCH: nightly  # branch of the DEB_S3_BUCKET and RPM_S3_BUCKET repos to release to, 'nightly' or 'beta'
+  DEB_TESTING_S3_BUCKET: apttesting.datad0g.com
+  RPM_TESTING_S3_BUCKET: yumtesting.datad0g.com
+  WINDOWS_TESTING_S3_BUCKET_A6: pipelines/A6/$CI_PIPELINE_ID
+  WINDOWS_TESTING_S3_BUCKET_A7: pipelines/A7/$CI_PIPELINE_ID
+  WINDOWS_BUILDS_S3_BUCKET: $WIN_S3_BUCKET/builds
+  ANDROID_BUILDS_S3_BUCKET: $ANDROID_S3_BUCKET/builds
+  DEB_RPM_TESTING_BUCKET_BRANCH: testing  # branch of the DEB_TESTING_S3_BUCKET and RPM_TESTING_S3_BUCKET repos to release to, 'testing'
+  DD_REPO_BRANCH_NAME: $CI_COMMIT_REF_NAME
+  S3_CP_OPTIONS: --only-show-errors --region us-east-1 --sse AES256
+  S3_CP_CMD: aws s3 cp $S3_CP_OPTIONS
+  S3_ARTIFACTS_URI: s3://dd-ci-artefacts-build-stable/$CI_PROJECT_NAME/$CI_PIPELINE_ID
+## comment out both lines below (S3_OMNIBUS_CACHE_BUCKET and USE_S3_CACHING) to allow
+## build to succeed with S3 caching disabled.
+  S3_OMNIBUS_CACHE_BUCKET: dd-ci-datadog-agent-omnibus-cache-build-stable
+  USE_S3_CACHING: --omnibus-s3-cache
+  S3_DSD6_URI: s3://dsd6-staging
+  RELEASE_VERSION_6: nightly
+  RELEASE_VERSION_7: nightly-a7
+  DATADOG_AGENT_BUILDIMAGES: v2424505-0439a40
+  DATADOG_AGENT_BUILDERS: v2448672-5304c3c
+  DATADOG_AGENT_WINBUILDIMAGES: v2468030-cbaf3fe
+  DATADOG_AGENT_WINBUILDERS: v2348149-ba6640d
+  DATADOG_AGENT_ARMBUILDIMAGES: v2424505-0439a40
+  DATADOG_AGENT_SYSPROBE_BUILDIMAGES: v2424505-0439a40
+  BCC_VERSION: v0.12.0
+  SYSTEM_PROBE_GO_VERSION: 1.13.8
+
+stages:
+  - preliminary_jobs
+  - system_probe_build
+  - agent_build
+
+#
+# Preliminary jobs
+#
+
+# check consistency of go.mod file with project imports
+go_tidy_check:
+  stage: preliminary_jobs
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-buildimages/deb_x64:$DATADOG_AGENT_BUILDIMAGES
+  tags: [ "runner:main", "size:large" ]
+  before_script:
+    - cd $SRC_PATH
+    - pip install --upgrade --ignore-installed pip setuptools
+    - pip install -r requirements.txt
+    - inv -e deps --no-dep-ensure --no-checks
+  script:
+    # Print a message and fail if "go mod tidy" modifies go.mod
+    - go mod tidy
+    - git diff-files --exit-code go.mod || (echo "go.mod is out of sync with project imports. Please run 'inv deps' and commit the changes on go.mod/go.sum." && false)
+
+shell_script_lint:
+  stage: preliminary_jobs
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/mars_jenkins_scripts:$DATADOG_AGENT_BUILDERS
+  tags: [ "runner:main", "size:large" ]
+  script:
+    - shellcheck --version
+    #Excludes:
+    #SC2028: echo may not expand escape sequences. Use printf.
+    #SC2059: Don't use variables in the printf format string. Use printf "..%s.." "$foo".
+    - shellcheck --severity=info -e SC2059 -e SC2028 --shell=bash ./cmd/**/*.sh ./omnibus/package-scripts/*/*
+
+#
+# system-probe build
+#
+
+system-probe_build:
+  stage: system_probe_build
+  trigger:
+    include: .gitlab/system-probe-build.yml
+    strategy: depend
+
+#
+# Agent builds
+#
+deb_build:
+  stage: agent_build
+  needs: [ "system-probe_build" ]
+  trigger:
+    include: .gitlab/deb-build.yml
+    strategy: depend
+
+msi_build:
+  stage: agent_build
+  needs: [ "shell_script_lint" ]
+  trigger:
+    include: .gitlab/msi-build.yml
+    strategy: depend
