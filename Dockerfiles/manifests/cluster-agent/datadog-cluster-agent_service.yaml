@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: datadog-cluster-agent
+  labels:
+    app: datadog-cluster-agent
+spec:
+  ports:
+  - port: 5005 # Cluster Agent commands: has to be the same as the one exposed in the DCA.
+    protocol: TCP
+    name: api
+  - port: 5004 # K8S Admission Webhooks: has to be the same as the one exposed in the DCA.
+    protocol: TCP
+    name: admissioncontroller
+  selector:
+    app: datadog-cluster-agent
