@@ -1,0 +1,24 @@
+{{/*
+NOTE: Changes made to this template should be reflected on the following templates, if applicable:
+* cmd/agent/gui/views/templates/generalStatus.tmpl
+*/}}==========
+Logs Agent
+==========
+{{ if (not .is_running) }}
+  Logs Agent is not running
+{{ else }}
+{{- range .integrations }}
+  {{ .name }}
+  {{printDashes .name "-"}}
+  {{- range .sources }}
+    Type: {{ .type }}
+    {{- range $key, $value := .configuration }}
+    {{$key}}: {{$value}}
+    {{- end }}
+    Status: {{ .status }}
+    {{- if .inputs }}
+    Inputs: {{ range $input := .inputs }}{{$input}} {{ end }}
+    {{- end }}
+  {{ end }}
+{{- end }}
+{{- end }}
