@@ -1,0 +1,202 @@
+stages:
+  - package_build
+  - image_build
+  - image_deploy
+  - e2e
+
+variables:
+  SRC_PATH: /src/github.com/DataDog/datadog-agent
+  DEPPROJECTROOT: /src/github.com/DataDog/datadog-agent
+  OMNIBUS_BASE_DIR: $CI_PROJECT_DIR/.omnibus/
+  OMNIBUS_PACKAGE_DIR: $CI_PROJECT_DIR/.omnibus/pkg/
+  # make sure the types of RPM packages are kept separate
+  OMNIBUS_BASE_DIR_SUSE: $CI_PROJECT_DIR/.omnibus/suse/
+  OMNIBUS_PACKAGE_DIR_SUSE: $CI_PROJECT_DIR/.omnibus/suse/pkg/
+  DD_AGENT_TESTING_DIR: $CI_PROJECT_DIR/test/kitchen
+  STATIC_BINARIES_DIR: bin/static
+  DOGSTATSD_BINARIES_DIR: bin/dogstatsd
+  AGENT_BINARIES_DIR: bin/agent
+  CLUSTER_AGENT_BINARIES_DIR: bin/datadog-cluster-agent
+  DEB_S3_BUCKET: apt.datad0g.com
+  RPM_S3_BUCKET: yum.datad0g.com
+  WIN_S3_BUCKET: dd-agent-mstesting
+  DEB_RPM_BUCKET_BRANCH: nightly  # branch of the DEB_S3_BUCKET and RPM_S3_BUCKET repos to release to, 'nightly' or 'beta'
+  DEB_TESTING_S3_BUCKET: apttesting.datad0g.com
+  RPM_TESTING_S3_BUCKET: yumtesting.datad0g.com
+  WINDOWS_TESTING_S3_BUCKET: $WIN_S3_BUCKET/pipelines/$CI_PIPELINE_ID
+  WINDOWS_BUILDS_S3_BUCKET: $WIN_S3_BUCKET/builds
+  DEB_RPM_TESTING_BUCKET_BRANCH: testing  # branch of the DEB_TESTING_S3_BUCKET and RPM_TESTING_S3_BUCKET repos to release to, 'testing'
+  DD_REPO_BRANCH_NAME: $CI_COMMIT_REF_NAME
+  S3_CP_OPTIONS: --only-show-errors --region us-east-1 --sse AES256
+  S3_CP_CMD: aws s3 cp $S3_CP_OPTIONS
+  S3_ARTEFACTS_URI: s3://dd-ci-artefacts-build-stable/$CI_PROJECT_NAME/$CI_PIPELINE_ID
+  S3_OMNIBUS_CACHE_BUCKET: dd-ci-datadog-agent-omnibus-cache-build-stable
+  S3_DSD6_URI: s3://dsd6-staging/linux
+  RELEASE_VERSION: nightly
+
+
+# Default before_script for all the jobs. If you create a new job and don't want this to execute
+# you NEED to overwrite it.
+before_script:
+  # We need to install go deps from within the GOPATH, which we set to / on builder images; that's because pointing
+  # GOPATH to the project folder would be too complex (we'd need to replicate the `src/github/project` scheme).
+  # So we copy the agent sources to / and bootstrap from there the vendor dependencies before running any job.
+  - echo running default before_script
+  - rsync -azr --delete ./ $SRC_PATH
+  - cd $SRC_PATH
+  - pip install -U pip
+  - inv -e deps
+
+#
+# Trigger conditions
+#
+
+# run job only when triggered by an external tool (ex: Jenkins). This is used
+# for jobs that run both on nightlies and tags
+.run_when_triggered: &run_when_triggered
+  only:
+    - triggers
+
+# run job only when triggered by an external tool (ex: Jenkins) and when
+# RELEASE_VERSION is NOT "nightly". In this setting we are building either a
+# new tagged version of the agent (an RC for example). In both cases the
+# artifacts should be uploaded to our staging repository.
+
+.run_when_triggered_on_tag: &run_when_triggered_on_tag
+  only:
+    refs:
+      - triggers
+  except: # we have to use except since gitlab doens't handle '!=' operator
+    variables:
+      - $RELEASE_VERSION == "nightly"
+      - $RELEASE_VERSION == "" # no  RELEASE_VERSION means a nightly build for omnibus
+
+# run job only when triggered by an external tool (ex: Jenkins) and when
+# RELEASE_VERSION is "nightly". In this setting we build from master and update
+# the nightly build for windows, linux and docker.
+
+.run_when_triggered_on_nightly: &run_when_triggered_on_nightly
+  only:
+    refs:
+      - triggers
+    variables:
+      - $RELEASE_VERSION == "nightly"
+
+# build Agent package for deb-x64
+agent_deb-x64:
+  stage: package_build
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/deb_x64:latest
+  tags: [ "runner:main", "size:large" ]
+  variables:
+    AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: /credentials
+  script:
+    # remove artifacts from previous pipelines that may come from the cache
+    - rm -rf $OMNIBUS_PACKAGE_DIR/*
+    # Artifacts and cache must live within project directory but we run omnibus
+    # from the GOPATH (see above). We then call `invoke` passing --base-dir,
+    # pointing to a gitlab-friendly location.
+    - inv -e agent.omnibus-build --release-version "$RELEASE_VERSION" --base-dir $OMNIBUS_BASE_DIR --omnibus-s3-cache
+    - dpkg -c $OMNIBUS_PACKAGE_DIR/datadog-agent*_amd64.deb
+    - $S3_CP_CMD $OMNIBUS_PACKAGE_DIR/datadog-agent*_amd64.deb $S3_ARTEFACTS_URI/datadog-agent_amd64.deb
+  # TODO: enabling the cache cause builds to be slower and slower on `master`. Re-enable once this is investigated/fixed
+  # cache:
+  #   # cache per branch
+  #   key: $CI_COMMIT_REF_NAME
+  #   paths:
+  #     - $OMNIBUS_BASE_DIR
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - $OMNIBUS_PACKAGE_DIR
+
+#
+# image_build
+#
+
+.docker_build_job_definition: &docker_build_job_definition
+  stage: image_build
+  tags: [ "runner:main", "size:large" ]
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/docker:18.03.1
+  services:
+    - 486234852809.dkr.ecr.us-east-1.amazonaws.com/remote-docker:latest
+  before_script: [ "# noop" ] # Override top level entry
+  dependencies: [] # Don't download Gitlab artefacts
+  script:
+    - apt-get update && apt-get install -y python-pip && pip install awscli
+    - aws s3 sync --only-show-errors "s3://dd-ci-artefacts-build-stable/datadog-agent/$CI_PIPELINE_ID" $BUILD_CONTEXT
+    - TAG_SUFFIX=${TAG_SUFFIX:-}
+    - BUILD_ARG=${BUILD_ARG:-}
+    - docker build $BUILD_ARG --pull --tag $IMAGE:v$CI_PIPELINE_ID-${CI_COMMIT_SHA:0:7}$TAG_SUFFIX $BUILD_CONTEXT
+    - docker push $IMAGE:v$CI_PIPELINE_ID-${CI_COMMIT_SHA:0:7}$TAG_SUFFIX
+
+# build the agent6 image
+build_agent6:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+
+# build the agent6 jmx image
+build_agent6_jmx:
+  <<: *docker_build_job_definition
+  variables:
+    IMAGE: &agent_ecr 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent/agent
+    BUILD_CONTEXT: Dockerfiles/agent
+    TAG_SUFFIX: -jmx
+    BUILD_ARG: --build-arg WITH_JMX=true
+
+#
+# Docker dev image deployments
+#
+
+.docker_tag_job_definition: &docker_tag_job_definition
+  stage: image_deploy
+  tags: [ "runner:main", "size:large" ]
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/docker:18.03.1
+  services:
+    - 486234852809.dkr.ecr.us-east-1.amazonaws.com/remote-docker:latest
+  before_script:
+    - export SRC_TAG=v$CI_PIPELINE_ID-${CI_COMMIT_SHA:0:7}
+    - apt-get update && apt-get install -y python-pip && pip install awscli
+    - DOCKER_REGISTRY_LOGIN=$(aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_LOGIN_SSM_KEY --with-decryption --query "Parameter.Value" --out text)
+    - aws ssm get-parameter --region us-east-1 --name ci.datadog-agent.$DOCKER_REGISTRY_PWD_SSM_KEY --with-decryption --query "Parameter.Value" --out text | docker login --username "$DOCKER_REGISTRY_LOGIN" --password-stdin "$DOCKER_REGISTRY_URL"
+    - pip install invoke
+  dependencies: [] # Don't download Gitlab artefacts
+
+.docker_hub_variables: &docker_hub_variables
+  DOCKER_REGISTRY_LOGIN_SSM_KEY: docker_hub_login
+  DOCKER_REGISTRY_PWD_SSM_KEY: docker_hub_pwd
+  DOCKER_REGISTRY_URL: docker.io
+  SRC_AGENT: *agent_ecr
+
+.quay_variables: &quay_variables
+  <<: *docker_hub_variables
+  DOCKER_REGISTRY_LOGIN_SSM_KEY: quay_login
+  DOCKER_REGISTRY_PWD_SSM_KEY: quay_pwd
+  DOCKER_REGISTRY_URL: quay.io
+
+dev_branch_docker_hub:
+  <<: *docker_tag_job_definition
+  except:
+    - master
+  variables:
+    <<: *docker_hub_variables
+  script:
+    - inv -e docker.publish ${SRC_AGENT}:${SRC_TAG} datadog/agent-dev:${CI_COMMIT_REF_SLUG}
+    - inv -e docker.publish ${SRC_AGENT}:${SRC_TAG}-jmx datadog/agent-dev:${CI_COMMIT_REF_SLUG}-jmx
+
+
+.pupernetes_template: &pupernetes_template
+  stage: e2e
+  image: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/datadog-agent-builders/deploy:latest
+  tags: [ "runner:main", "size:large" ]
+  before_script: [ "# noop" ] # Override top level entry
+  script:
+  - inv -e e2e-tests --image=datadog/agent-dev:$CI_COMMIT_REF_SLUG
+
+pupernetes-dev:
+  <<: *pupernetes_template
+  when: manual
+  except:
+    - master
+    - tags
